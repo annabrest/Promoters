@@ -34,7 +34,6 @@ seqlengths(Annotation)
 genes <- Annotation[mcols(Annotation)$type == "gene" & mcols(Annotation)$biotype == "protein_coding",]
 ```
 
-#Find coordinates of promoters with updated width, exclude genes inside the poromoter and update promoter "start"
 ```{r}
 # Define all potential promoters and trim out of border regions
 promoters <- trim(GenomicRanges::promoters(genes, upstream = prom_size, downstream = 0))
@@ -48,6 +47,15 @@ intersect_promoters_gaps <- GenomicRanges::intersect(promoters, gaps_genes)
 
 # Filter short regions in potential promoter
 intersect_promoters_gaps_filter <- intersect_promoters_gaps[width(intersect_promoters_gaps) >= minSize]
+
+# length(genes)
+# [1] 27416
+# length(intersect_promoters_gaps)
+# [1] 27201
+# length(intersect_promoters_gaps_filter)
+# [1] 22970
+# 27416-22970
+# [1] 4446
 
 #------FInd genes following promoters
 #"precede(query, subject)" returns the index of the interval in subject that is directly preceded by the "query" range. Overlaping regions are excluded
@@ -70,82 +78,6 @@ genes_promoters <- sort(c(gene_list, intersect_promoters_gaps_filter), ignore.st
 rtracklayer::export.gff3(intersect_promoters_gaps_filter, output_promoter_file, format = "GFF3")
 rtracklayer::export.gff3(genes_promoters, output_genes_promoters_file, format = "GFF3")
 
-#Update promoter coordinates toward extraction of sequence with bedtools
-# "End" should be +1
-
-intersect_promoters_gaps_filter_bedtools <- intersect_promoters_gaps_filter
-end(intersect_promoters_gaps_filter_bedtools) <- end(intersect_promoters_gaps_filter_bedtools)+1
-
-rtracklayer::export.gff3(intersect_promoters_gaps_filter_bedtools, paste0("bedtools_", output_promoter_file), format = "GFF3")
-
 #End
-```
-
-# To extract the sequence of promoters continue with bedtools using following comands:
-
-bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.27.dna.genome.fa -bed bedtools_promoters_1500.gff3 -s -tab -fo promoters1500.bed
-
-bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.27.dna.genome.fa -bed bedtools_promoters_1500.gff3 -s -fo promoters1500.fa
-
-# -s to take the directoinality into acount
-# -fo to define the output file name
-# -tab for tab delimanated output
-
-
-#######----------#############
-#Investigation of promoters:
-##Prepare the list of promoters (with updated coordinates) withot filtering by min_size
-```{r}
-# length(genes)
-# [1] 27416
-# length(intersect_promoters_gaps)
-# [1] 27201
-# length(intersect_promoters_gaps_filter)
-# [1] 22970
-# 27416-22970
-# [1] 4446
-
-# intersect_promoters_gaps - all updated promoters before filtering by minsize
-
-#------FInd genes following promoters
-#"precede(query, subject)" returns the index of the interval in subject that is directly preceded by the "query" range. Overlaping regions are excluded
-#gene_list <- genes[precede(intersect_promoters_gaps, genes)]
-gene_list_non_filter <- genes[precede(intersect_promoters_gaps, genes)]
-length(gene_list_non_filter) == length(intersect_promoters_gaps) #should be TRUE
-
-#------Update Metadata of intersect_promoters_gaps, and change "ID", "type" and "biotype" columns to be "promoter". "ID" should be unique identifier!!
-mcols(intersect_promoters_gaps) <- mcols(gene_list_non_filter) 
-mcols(intersect_promoters_gaps)$ID <- str_replace(intersect_promoters_gaps$ID, "gene:", "")
-mcols(gene_list_non_filter)$ID <- str_replace(gene_list_non_filter$ID, "gene:", "")
-mcols(intersect_promoters_gaps)$type <- "promoter"
-mcols(intersect_promoters_gaps)$biotype <- "promoter"
-
-#Save annatation files for promoters without filtering
-rtracklayer::export.gff3(intersect_promoters_gaps, paste0("non_filtered_", output_promoter_file), format = "GFF3")
-rtracklayer::export.gff3(gene_list_non_filter, paste0("non_filtered_genes_", output_promoter_file), format = "GFF3")
-
-
-```
-
-Find the promoters of the genes with promoter size less then 500
-```{r}
-intersect_promoters_gaps_filtered_out <- intersect_promoters_gaps[width(intersect_promoters_gaps) < minSize]
-
-#------FInd genes following promoters
-#"precede(query, subject)" returns the index of the interval in subject that is directly preceded by the "query" range. Overlaping regions are excluded
-gene_list_filtered_out <- genes[precede(intersect_promoters_gaps_filtered_out, genes)]
-length(gene_list_filtered_out) == length(intersect_promoters_gaps_filtered_out) #should be TRUE
-
-#------Update Metadata of intersect_promoters_gaps, and change "ID", "type" and "biotype" columns to be "promoter". "ID" should be unique identifier!!
-mcols(intersect_promoters_gaps_filtered_out) <- mcols(gene_list_filtered_out) 
-mcols(intersect_promoters_gaps_filtered_out)$ID <- str_replace(intersect_promoters_gaps_filtered_out$ID, "gene:", "")
-mcols(gene_list_filtered_out)$ID <- str_replace(gene_list_filtered_out$ID, "gene:", "")
-mcols(intersect_promoters_gaps_filtered_out)$type <- "promoter"
-mcols(intersect_promoters_gaps_filtered_out)$biotype <- "promoter"
-
-#Save annatation files for promoters without filtering
-rtracklayer::export.gff3(intersect_promoters_gaps_filtered_out, paste0("500_filtered_out_", output_promoter_file), format = "GFF3")
-rtracklayer::export.gff3(gene_list_filtered_out, paste0("500_filtered_out_genes_", output_promoter_file), format = "GFF3")
-
 ```
 
