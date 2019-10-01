@@ -1,0 +1,7 @@
+bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.27.dna.genome.fa -bed promoters_4500.gff3 -s -tab -fo promoters4500.bed.out
+
+bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.27.dna.genome.fa -bed promoters_4500.gff3 -s -fo promoters4500.fa.out
+
+# -s to take the directoinality into acount
+# -fo to define the output file name
+# -tab for tab delimanated output

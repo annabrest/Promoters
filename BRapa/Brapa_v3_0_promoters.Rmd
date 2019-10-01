@@ -1,0 +1,195 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rtracklayer)
+library(GenomicRanges)
+library(tidyverse)
+library(Biostrings)
+```
+
+```{r}
+fasta_file <- "Brapa_v3.0/annotation/Brapa_sequence_v3.0.fasta"
+Annotation_file <- "Brapa_v3.0/annotation/Brapa_sequence_v3.0_genes.gff3"
+prom_size <- 1500 #Desired promoter size
+minSize <- 500 #Minimal promoter size
+genome_name <- "Brapa_3.0"
+output_path <- "Brapa_v3.0/promoters/"
+
+
+output_promoter_file <- paste0(output_path, genome_name, "_", "promoters_", prom_size, ".gff3")
+output_genes_promoters_file <- paste0(output_path, genome_name, "_","genes_promoters_", prom_size, ".gff3")
+
+
+
+Annotation <- import.gff3(Annotation_file)
+#GRanges object with 314250 ranges and 6 metadata columns
+
+#check for chromosome length
+table(is.na(seqlengths(Annotation)))
+#if no chromosome length, continue
+
+#Add chromosome length to Annotation
+fasta <- Biostrings::readDNAStringSet(fasta_file)
+seqlengths(Annotation) <- width(fasta[match(levels(seqnames(Annotation)), names(fasta)),])
+# there are less seqnames(Annotation) than names(fasta), wondering why?
+
+seqlengths(Annotation)[1:10]
+seqinfo(Annotation)
+
+#      A01      A02      A03      A04      A05      A06      A07      A08      A09      A10 
+# 29595527 31442979 38154160 21928416 28493056 29167992 28928902 22981702 45156810 20725698 
+
+# Define genes, No TE
+genes <- Annotation[mcols(Annotation)$type == "gene",]
+#GRanges object with 46250 ranges and 6 metadata columns
+#& mcols(Annotation)$biotype == "protein_coding" #couldn't be implimented, because biotype is not existing in this annotation
+
+table(mcols(Annotation)$type)
+ #  gene   mRNA    CDS 
+ # 46250  46250 221750 
+
+
+```
+
+#######--------#######
+#I have tried to examine the overlap between "genes" and "TE" annotation in order to exclude TEs, however, the seqnames are different, and this time seqnames(Annotation_TE) are the same as names(fasta). Can't compare them because of it.
+
+```{r}
+Annotation_TE <- import.gff("Brapa_3.0_web/Brapa_genome_v3.0_TE.gff")
+table(mcols(Annotation_TE)$type)
+
+findOverlaps(genes, Annotation_TE, type = "equal")
+all(levels(seqnames(Annotation_TE)) == levels(seqnames(genes)))
+
+length(levels(seqnames(Annotation_TE)))
+length(levels(seqnames(genes)))
+```
+
+
+#Find coordinates of promoters with updated width, exclude genes inside the poromoter and update promoter "start"
+```{r}
+# Define all potential promoters and trim out of border regions
+promoters <- trim(GenomicRanges::promoters(genes, upstream = prom_size, downstream = 0))
+
+# filter out all potential promoters which include genes, and change size of promoters if genes are too close, filter for short promoters (lee than minimal length):
+# 1------find gaps bteween genes
+gaps_genes <- GenomicRanges::gaps(genes)
+
+#------find overlap between promoters and gaps between genes, the shortest will become a new promoter.
+intersect_promoters_gaps <- GenomicRanges::intersect(promoters, gaps_genes)
+#GRanges object with 45718 ranges
+
+# Filter short regions (less then minSize) in potential promoter
+intersect_promoters_gaps_filter <- intersect_promoters_gaps[width(intersect_promoters_gaps) >= minSize]
+#GRanges object with 43963 ranges
+
+#------FInd genes following promoters
+#"precede(query, subject)" returns the index of the interval in subject that is directly preceded by the "query" range. Overlaping regions are excluded
+#gene_list <- genes[precede(intersect_promoters_gaps, genes)]
+gene_list <- genes[precede(intersect_promoters_gaps_filter, genes)]
+length(gene_list) == length(intersect_promoters_gaps_filter) #should be TRUE
+
+#------Update Metadata of intersect_promoters_gaps, and change "ID", "type" and "biotype" columns to be "promoter". "ID" should be unique identifier!!
+mcols(intersect_promoters_gaps_filter) <- mcols(gene_list) 
+
+mcols(intersect_promoters_gaps_filter)$type <- "promoter"
+#mcols(intersect_promoters_gaps_filter)$biotype <- "promoter"
+mcols(intersect_promoters_gaps_filter)$ID <- str_replace(mcols(intersect_promoters_gaps_filter)$ID, "gene", "promoter")
+
+ #------Sort and combine to final list for genes and promoters 
+genes_promoters <- sort(c(gene_list, intersect_promoters_gaps_filter), ignore.strand=TRUE)
+
+```
+
+# DON'T RUN!!!
+```{r}
+#Save annatation files for promoters and gene_promoters
+rtracklayer::export.gff3(intersect_promoters_gaps_filter, output_promoter_file, format = "GFF3") 
+rtracklayer::export.gff3(genes_promoters, output_genes_promoters_file, format = "GFF3")
+
+
+#End
+```
+
+The folowing will require to be modified to extract strand spesific sequence
+```{r}
+library(BSgenome)
+
+promoter_seq <- getSeq(fasta, intersect_promoters_gaps_filter)
+genes_seq <- getSeq(fasta, gene_list)
+#Add seq to gff3 file
+mcols(intersect_promoters_gaps_filter)$seq <- promoter_seq
+all(width(intersect_promoters_gaps_filter) == width(promoter_seq)) #should be TRUE
+
+#Add gene ID to fasta file
+names(promoter_seq) <- mcols(intersect_promoters_gaps_filter)$ID
+names(genes_seq) <- mcols(gene_list)$ID
+#save fasta file
+writeXStringSet(promoter_seq, paste0(output_path, genome_name, "_", "promoters_", prom_size, ".fa"), format="fasta")
+writeXStringSet(genes_seq, paste0(output_path, genome_name, "_", "genes_",  ".fa"), format="fasta")
+
+########-------------############
+# getSeq should be strand specific, run bedtools and compare - done; everything working
+# promoter_seq_pos <- getSeq(fasta, intersect_promoters_gaps_filter[strand(intersect_promoters_gaps_filter) == "+",])
+# promoter_seq_neg <- getSeq(reverseComplement(fasta), intersect_promoters_gaps_filter[strand(intersect_promoters_gaps_filter) == "-",])
+
+# reverseComplement(fasta)[1:3,]
+# fasta[1:3,]
+
+```
+
+######----------#############
+#Investigation of annotated promoters:
+##Prepare the list of promoters (with updated coordinates) withot filtering by min_size
+
+```{r}
+length(genes)
+# [1] 46250
+length(intersect_promoters_gaps)
+# [1] 45718
+length(intersect_promoters_gaps_filter)
+# [1] 43963
+length(genes)-length(intersect_promoters_gaps_filter)
+# [1] 2287
+
+# create summary report:
+write_csv(
+data.frame(
+"length_annotation" = length(Annotation),  
+"n_genes" = length(genes),
+"n_promoters_not_filteres" = length(intersect_promoters_gaps),
+"n_promoters_filtered" = length(intersect_promoters_gaps_filter),
+"n_promoters_filtered_out" = length(genes)-length(intersect_promoters_gaps_filter)
+), paste0(output_path, genome_name, "_", "report.csv")
+)
+```
+
+######----The END-----#######
+
+
+
+
+# To extract the sequence of promoters with bedtools, continue using following comands:
+samtools faidx Brapa_v3.0/annotation/Brapa_sequence_v3.0.fasta
+
+bedtools getfasta -fi Brapa_v3.0/annotation/Brapa_sequence_v3.0.fasta -bed Brapa_v3.0/promoters/Brapa_3.0_promoters_1500.gff3 -s -tab -fo Brapa_v3.0/promoters/Brapa_3.0_promoters1500_tab.fa
+bedtools getfasta -fi Brapa_v3.0/annotation/Brapa_sequence_v3.0.fasta -bed Brapa_v3.0/promoters/Brapa_3.0_promoters_1500.gff3 -s -fo Brapa_v3.0/promoters/Brapa_3.0_promoters1500.fa
+
+# -s to take the directoinality into acount
+# -fo to define the output file name
+# -tab for tab delimanated output
+
+*The "start" coordinates of output file should be updated by +1, since bed file is 0-based start position (gff is 1-based). There is no need to update gff file before using bedtools, it knows how to deal with gff.
+
+
+
+
+
+

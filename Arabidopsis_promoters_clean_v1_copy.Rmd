@@ -14,8 +14,7 @@ library(tidyverse)
 ```
 
 ```{r}
-#Annotation_file <- "Arabidopsis_thaliana.TAIR10.27.gff3"
-Annotation_file <- "Arabidopsis_thaliana.TAIR10.42.gff3"
+Annotation_file <- "Arabidopsis_thaliana.TAIR10.27.gff3"
 prom_size <- 1500 #Desired promoter size
 minSize <- 500 #Minimal promoter size
 
@@ -28,9 +27,6 @@ Annotation <- import.gff3(Annotation_file)
 chrom_size_Ath_TAIR10 <- read_tsv("chrom_size_Ath_TAIR10.txt", col_names = FALSE)
 seqlengths(Annotation) <- as.vector(chrom_size_Ath_TAIR10[[2]]) #Essential info for following calculations
 seqlengths(Annotation)
-#        1        2        3        4        5       Mt       Pt 
-# 30427671 19698289 23459830 18585056 26975502   366924   154478 
-
 #       1        2        3        4        5       Mt       Pt 
 # 30934802 20026597 23850831 18894810 27425097   373044   157057 
 
@@ -38,13 +34,12 @@ seqlengths(Annotation)
 genes <- Annotation[mcols(Annotation)$type == "gene" & mcols(Annotation)$biotype == "protein_coding",]
 ```
 
-
 #Find coordinates of promoters with updated width, exclude genes inside the poromoter and update promoter "start"
 ```{r}
 # Define all potential promoters and trim out of border regions
 promoters <- trim(GenomicRanges::promoters(genes, upstream = prom_size, downstream = 0))
 
-# filter out all potential promoters which include genes, and change size of promoters if genes are too close, filter for short promoters (lee than minimal length):
+# filter out all potentialpromoters which include genes, and change size of promoters if genes are too close, filter for short promoters (lee than minimal length):
 # 1------find gaps bteween genes
 gaps_genes <- GenomicRanges::gaps(genes)
 
@@ -70,71 +65,45 @@ mcols(intersect_promoters_gaps_filter)$ID <- str_replace(mcols(intersect_promote
  #------Sort and combine to final list for genes and promoters 
 genes_promoters <- sort(c(gene_list, intersect_promoters_gaps_filter), ignore.strand=TRUE)
 
-```
 
-DON'T RUN!
-```{r}
-
-# Save annatation files for promoters and gene_promoters
+#Save annatation files for promoters and gene_promoters
 rtracklayer::export.gff3(intersect_promoters_gaps_filter, output_promoter_file, format = "GFF3")
 rtracklayer::export.gff3(genes_promoters, output_genes_promoters_file, format = "GFF3")
+
+#Update promoter coordinates toward extraction of sequence with bedtools
+# "End" should be +1
+
+intersect_promoters_gaps_filter_bedtools <- intersect_promoters_gaps_filter
+end(intersect_promoters_gaps_filter_bedtools) <- end(intersect_promoters_gaps_filter_bedtools)+1
+
+rtracklayer::export.gff3(intersect_promoters_gaps_filter_bedtools, paste0("bedtools_", output_promoter_file), format = "GFF3")
 
 #End
 ```
 
 # To extract the sequence of promoters continue with bedtools using following comands:
 
-bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.42.dna.genome.fa -bed promoters_1500.gff3 -s -tab -fo promoters1500_tab.fa
-bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.42.dna.genome.fa -bed promoters_1500.gff3 -s -fo promoters1500.fa
+bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.27.dna.genome.fa -bed bedtools_promoters_1500.gff3 -s -tab -fo promoters1500.bed
+
+bedtools getfasta -fi Arabidopsis_thaliana.TAIR10.27.dna.genome.fa -bed bedtools_promoters_1500.gff3 -s -fo promoters1500.fa
+
 # -s to take the directoinality into acount
 # -fo to define the output file name
 # -tab for tab delimanated output
 
-*The "start" coordinates of output file should be updated by +1, since bed file is 0-based start position (gff is 1-based). There is no need to update gff file before using bedtools, it knows how to deal with gff.
 
 #######----------#############
-
-# Extract the sequence of the genes and promoters into fasta file
-```{r}
-fasta <- Biostrings::readDNAStringSet("Arabidopsis_thaliana.TAIR10.42.dna.genome.fa")
-names(fasta) <- c("1", "2", "3", "4", "5", "Mt", "Pt")
-
-promoter_seq_Arab <- getSeq(fasta, intersect_promoters_gaps_filter)
-genes_seq_Arab <- getSeq(fasta, gene_list)
-
-#Add gene ID to fasta file
-names(promoter_seq_Arab) <- mcols(intersect_promoters_gaps_filter)$ID
-names(genes_seq_Arab) <- mcols(gene_list)$ID
-
-```
-
-# DON'T RUN!
-```{r}
-#save fasta file
-output_path <- "Arabidopsis/"
-genome_name <- "TAIR10.42"
-
-writeXStringSet(promoter_seq_Arab, paste0(output_path, genome_name, "_", "promoters_", prom_size, ".fa"), format="fasta")
-writeXStringSet(genes_seq_Arab, paste0(output_path, genome_name, "_", "genes", ".fa"), format="fasta")
-
-```
-
-
-
-
-
-
 #Investigation of promoters:
 ##Prepare the list of promoters (with updated coordinates) withot filtering by min_size
 ```{r}
 # length(genes)
-# [1] 27628
+# [1] 27416
 # length(intersect_promoters_gaps)
-# [1] 27101
+# [1] 27201
 # length(intersect_promoters_gaps_filter)
-# [1] 21821
-# length(genes)-length(intersect_promoters_gaps_filter)
-# [1] 5807
+# [1] 22970
+# 27416-22970
+# [1] 4446
 
 # intersect_promoters_gaps - all updated promoters before filtering by minsize
 

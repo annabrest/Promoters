@@ -26,11 +26,11 @@ seqlengths(Annotation) <- as.vector(chrom_size_Ath_TAIR10) #Issential info for f
 #       1        2        3        4        5       Mt       Pt 
 # 30934802 20026597 23850831 18894810 27425097   373044   157057 
 
-names(Annotation) <- 
+names(Annotation)
 #quick check up
 summary(mcols(Annotation))
 granges(Annotation) # left table
-seqnames(Annotation) #summary of chromasomes
+seqnames(Annotation) #summary of chromosomes
 head(Annotation, n=10)
 ranges(Annotation) #start, end, width
 mcols(Annotation) #right table
@@ -290,8 +290,6 @@ plotRanges(gene_promoters_all,xlim=c(0,60000))
 
 
 
-
-
 # Troubleshooting full Annotation analysis
 # Devide dataset by chromosomes
 
@@ -360,11 +358,6 @@ genes_promoters <- sort(c(genes, gene_promoters_all_filter), ignore.strand=TRUE)
 
 
 
-
-
-
-
-
 #promoter sequence (1.5kbp, 3kbp, and 4.5kbp upstream
 ## 1. Define list of promoters upstream of the "genes" based on "promoter_size"
 ## 2. Check for the distance between genes, if smaler then promoter size and greater then "minsize" = 0.5kb, take intergenic region as promoter.
@@ -405,7 +398,6 @@ head(genes)
 
 
 
-
 ##Algoritm
 ```{r}
 # "genes" = genes coordinates - TE extracted from"Annotation"
@@ -422,8 +414,6 @@ resize(g, 5, fix="end")
 # rename type to be "Promoters"
 # "gens_and_promoters" = combine "gens" and Promoters
 ```
-
-
 
 
 ```{r}
@@ -534,8 +524,6 @@ gene_promoters_all_filter <- gene_promoters_all[width(gene_promoters_all) >= min
 genes_promoters <- sort(c(genes, gene_promoters_all_filter), ignore.strand=TRUE)
 
 ```
-
-
 
 
 ```{r}

@@ -1,0 +1,182 @@
+---
+title: "Comparison between Arabidopsis and Brapa promoters"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rtracklayer)
+library(Biostrings)
+library(GenomicRanges)
+library(tidyverse)
+library(BSgenome)
+```
+
+
+```{r}
+setwd("~/Work/2019/Analysis/Promoters")
+
+promoters_Arab <- Biostrings::readDNAStringSet("~/Work/2019/Analysis/Promoters/Arabidopsis/TAIR10.42_promoters_1500.fa")
+promoters_Brapa <- Biostrings::readDNAStringSet("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters/Brapa_3.0_promoters_1500.fa")
+
+genes_Arab <- Biostrings::readDNAStringSet("~/Work/2019/Analysis/Promoters/Arabidopsis/TAIR10.42_genes.fa")
+genes_Brapa <- Biostrings::readDNAStringSet("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters/Brapa_3.0_genes_.fa")
+
+
+```
+
+# Calculate CG and CpG count for promoters
+```{r}
+CG_count_Arab <- letterFrequency(promoters_Arab,"CG")
+CpG_count_Arab <- vcountPattern("CG", promoters_Arab)
+
+CG_count_Brapa <- letterFrequency(promoters_Brapa,"CG")
+CpG_count_Brapa <- vcountPattern("CG", promoters_Brapa)
+
+
+mean(CG_count_Arab[,1])
+mean(CpG_count_Arab)
+mean(CG_count_Brapa[,1])
+mean(CpG_count_Brapa)
+
+# [1] 445.7527
+# [1] 29.58164
+# [1] 470.54
+# [1] 32.36551
+
+
+CG_count_Arab <- tbl_df(CG_count_Arab) %>% 
+  mutate("species" = paste("Arabidopsis"), "type" = paste("promoter"), "CG" = `C|G`)  
+CG_count_Brapa <- tbl_df(CG_count_Brapa) %>% 
+  mutate("species" = paste("Brapa"), "type" = paste("promoter"),"CG" = `C|G`)
+
+CG_count <- bind_rows(CG_count_Arab, CG_count_Brapa)
+
+
+CpG_count_Arab <- tbl_df(CpG_count_Arab) %>% 
+  select("CpG" = value) %>% 
+ mutate("species" = paste("Arabidopsis"), "type" = paste("promoter"))  
+CpG_count_Brapa <- tbl_df(CpG_count_Brapa) %>% 
+  select("CpG" = value) %>% 
+ mutate("species" = paste("Brapa"), "type" = paste("promoter")) 
+
+CpG_count <- bind_rows(CpG_count_Arab, CpG_count_Brapa)
+
+
+#####
+ggplot(CG_count, aes(CG, stat(density), colour =species)) +
+  geom_freqpoly()
+#####
+
+
+# Histogram with density plot
+p1 <- ggplot(CG_count, aes(x= CG, color = species, fill = species)) +
+  geom_histogram(aes( y=..density..), position="identity", alpha=0.2 , binwidth = 10) +
+ geom_density(alpha=.2, fill="#FF6666") +
+  labs(title = "C|G frequency in promoters (all)")
+
+p2 <- ggplot(CpG_count, aes(x= CpG, color = species, fill = species)) +
+  geom_histogram(aes( y=..density..), position="identity", alpha=0.2 , binwidth = 2) +
+ geom_density(alpha=.2, fill="#FF6666") +
+  labs(title = "CpG frequency in promoters (all)")
+   
+
+```
+
+# Save plots - DON'T RUN!
+```{r}
+dir.create("Plots")
+ggsave("Plots/CG_frequency_promoters_allg_v1.jpeg", p1,
+        width = 15, height = 15, units = "cm")
+ggsave("Plots/CpG_frequency_promoters_allg_v1.jpeg", p2,
+        width = 15, height = 15, units = "cm")
+rm(p1, p2)    
+```
+
+
+# Calculate CG and CpG count for genes
+```{r}
+CG_count_genes_Arab <- letterFrequency(genes_Arab,"CG")
+CpG_count_genes_Arab <- vcountPattern("CG", genes_Arab)
+
+CG_count_genes_Arab[1:2]
+CpG_count_genes_Arab[1:2]
+
+CG_count_genes_Brapa <- letterFrequency(genes_Brapa,"CG")
+CpG_count_genes_Brapa <- vcountPattern("CG", genes_Brapa)
+
+
+mean(CG_count_genes_Arab[,1])
+mean(CpG_count_genes_Arab)
+
+mean(CG_count_genes_Brapa[,1])
+mean(CpG_count_genes_Brapa)
+
+# [1] 445.7527
+# [1] 29.58164
+# [1] 470.54
+# [1] 32.36551
+
+
+CG_count_genes_Arab <- tbl_df(CG_count_genes_Arab) %>% 
+  mutate("species" = paste("Arabidopsis"), "type" = paste("genes"), "CG" = `C|G`)  
+CG_count_genes_Brapa <- tbl_df(CG_count_genes_Brapa) %>% 
+  mutate("species" = paste("Brapa"), "type" = paste("genes"),"CG" = `C|G`)
+
+CG_count_genes <- bind_rows(CG_count_genes_Arab, CG_count_genes_Brapa)
+
+
+CpG_count_genes_Arab <- tbl_df(CpG_count_genes_Arab) %>% 
+  select("CpG" = value) %>% 
+ mutate("species" = paste("Arabidopsis"), "type" = paste("genes"))  
+CpG_count_genes_Brapa <- tbl_df(CpG_count_genes_Brapa) %>% 
+  select("CpG" = value) %>% 
+ mutate("species" = paste("Brapa"), "type" = paste("genes")) 
+
+CpG_count_genes <- bind_rows(CpG_count_genes_Arab, CpG_count_genes_Brapa)
+
+# Histogram with density plot
+p1 <- ggplot(CG_count_genes, aes(x= CG, color = species, fill = species)) +
+  geom_histogram(aes( y=..density..), position="identity", alpha=0.2 , binwidth = 100) +
+ geom_density(alpha=.2, fill="#FF6666") +
+  labs(title = "C|G frequency in genes (all)")
+
+p2 <- ggplot(CpG_count_genes, aes(x= CpG, color = species, fill = species)) +
+  geom_histogram(aes( y=..density..), position="identity", alpha=0.2 , binwidth = 10) +
+ geom_density(alpha=.2, fill="#FF6666") +
+  labs(title = "CpG frequency in genes (all)")
+p1
+p2
+
+```
+
+
+```{r}
+ggsave("Plots/CG_frequency_genes_allg_v1.jpeg", p1,
+        width = 15, height = 15, units = "cm")
+ggsave("Plots/CpG_frequency_genes_allg_v1.jpeg", p2,
+        width = 15, height = 15, units = "cm")
+ rm(p1, p2)
+
+```
+
+# Calculate dinucleotid frequency for promoters
+```{r}
+dinucl_freq_Arab <- dinucleotideFrequency(promoters_Arab)
+dinucl_freq_Brapa <- dinucleotideFrequency(promoters_Brapa)
+
+
+  
+  ggplot(data = tbl_df(dinucl_freq_Arab), aes(x=CG)) +
+  geom_histogram() 
+  ggplot(data = tbl_df(dinucl_freq_Arab), aes(x=GC)) +
+  geom_histogram() 
+  +
+  geom_histogram(data = tbl_df(dinucl_freq_Brapa), aes(x=CG))
+  
+  tbl_df(dinucl_freq_Arab) %>% select(GC)
+```
+

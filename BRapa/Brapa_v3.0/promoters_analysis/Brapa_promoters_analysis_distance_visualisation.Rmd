@@ -1,0 +1,543 @@
+---
+title: "Analysis of distribution of TF binding sites in Brapa promoters; investigation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(gplots)
+
+library(randomForest)
+library(broom) # create dataframe from statistical tests outputs
+library(gridExtra) # to save ggplots on 1 page
+
+# library(plyr) # to round up to tearest 10; problem with some dplyr comands
+
+library(rtracklayer)
+library(Biostrings)
+library(GenomicRanges)
+
+# source("~/Work/2019/Analysis/Utilities_R/Functions/My_functions.R")
+
+set.seed(100)
+```
+
+```{r}
+load("data/data_to_load/Brapa_promoters_analysis_distance_short.RData")
+```
+
+```{r}
+head(Brapa3_TF_results_homoeolog)
+head(TF_family)
+list_TF_motif <- unique(Brapa3_TF_results_homoeolog$motif)
+
+```
+
+
+
+
+# 1. Plot "Mean number of TF binding sites for each TF per promoter" Brapa vs Arabidopsis
+
+```{r}
+Brapa_data <- Brapa3_TF_results_orthologs %>% 
+  group_by(motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Arab_data <- Ara_TF_results_orthologs %>% 
+  group_by(motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Brapa_data
+Arab_data
+
+data <- full_join(Brapa_data, Arab_data, by = "motif")
+
+# basic plot
+p1 <- ggplot(data, mapping = aes(mean_bs_TF_promoter.x, mean_bs_TF_promoter.y)) +
+  geom_point() +
+  xlim(0,max(Brapa_data$mean_bs_TF_promoter)) +
+  ylim(0,max(Brapa_data$mean_bs_TF_promoter)) +
+  labs(title = "Mean number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa") 
+# +
+#   geom_abline(slope = coef(model)[2], intercept = coef(model)[1])
+
+# add regression line
+p2 <- ggplot(data, mapping = aes(mean_bs_TF_promoter.x, mean_bs_TF_promoter.y)) +
+  geom_point() +
+  xlim(0,max(Brapa_data$mean_bs_TF_promoter)) +
+  ylim(0,max(Brapa_data$mean_bs_TF_promoter)) +
+  labs(title = "Mean number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  geom_smooth(method=lm, se=FALSE, fullrange = TRUE) # Remove confidence intervals
+                                    # Extend the regression lines
+
+# add statistics
+library("ggpubr")
+p3 <- ggscatter(data, x = "mean_bs_TF_promoter.x", y = "mean_bs_TF_promoter.y", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Brapa", ylab = "Arabidopsis", title = "Mean number of TF binding sites per promoter")
+
+
+# library(ggpubr)
+# p1 + stat_cor(
+#    aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+#   label.x = 3
+# )
+# 
+# p1 + stat_cor(method = "pearson", label.x = 3, label.y = 30)
+
+# To calculate correlation:
+model <- lm(mean_bs_TF_promoter.y ~ mean_bs_TF_promoter.x, data = data)
+
+summary(model)
+coef(model)
+
+# Pearson correlation test:
+res <- cor.test(data$mean_bs_TF_promoter.x, data$mean_bs_TF_promoter.y, 
+                    method = "pearson")
+res
+# Extract the p.value
+res$p.value
+
+# Extract the correlation coefficient
+res$estimate
+#       cor 
+# 0.9345368 
+```
+
+```{r eval=FALSE, include=FALSE}
+# dir.create("Plots/Brapa_promoters_analysis_distance/BrapaVsArab")
+# basic plot
+ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_mean_N_bs_TF_promoters_BrapaVsArab_v1.jpeg", p1,
+        width = 10, height = 10, units = "cm")
+# add regression line
+ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_mean_N_bs_TF_promoters_BrapaVsArab_v2.jpeg", p2,
+        width = 10, height = 10, units = "cm")
+# add statistics
+ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_mean_N_bs_TF_promoters_BrapaVsArab_v3.jpeg", p3,
+        width = 10, height = 10, units = "cm")
+    
+rm(p1, p2, p3, Brapa_data, Arab_data, data)
+```
+
+# 2. Plot "Mean number of TF binding sites for each TF per promoter" Brapa vs Arabidopsis
+## look on each homeolog separately, compare total A.thaliana vs B.rapa for each homolog group
+
+```{r}
+Brapa_input <- Brapa3_TF_results_orthologs %>% 
+  group_by(motif, homoeolog, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(motif, homoeolog) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Arab_input <- Ara_TF_results_orthologs %>% 
+  group_by(motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Brapa_input
+Arab_input
+
+data_input <- full_join(Brapa_input, Arab_input, by = "motif")
+
+p1 <- ggplot(data_input, mapping = aes(mean_bs_TF_promoter.x, mean_bs_TF_promoter.y, colour = homoeolog)) +
+  geom_point() +
+  ylim(0,max(Brapa_input$mean_bs_TF_promoter)) +
+  labs(title = "Mean number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  geom_smooth(method=lm, se=FALSE, fullrange = TRUE) # Remove confidence intervals
+                                    # Extend the regression lines
+ 
+
+p2 <- ggplot(data_input, mapping = aes(mean_bs_TF_promoter.x, mean_bs_TF_promoter.y, colour = homoeolog)) +
+  geom_point() +
+  facet_wrap(~homoeolog ) +
+  ylim(0,max(Brapa_input$mean_bs_TF_promoter)) +
+  labs(title = "Mean number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  geom_smooth(method=lm, se=FALSE, fullrange = TRUE) # Remove confidence intervals  # Extend the regression lines
+ 
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# dir.create("Plots/Brapa_promoters_analysis_distance/BrapaVsArab")
+# basic plot
+ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_mean_N_bs_TF_promoters_BrapaVsArab_homolog_v1.jpeg", p1,
+        width = 15, height = 15, units = "cm")
+# add regression line
+ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_mean_N_bs_TF_promoters_BrapaVsArab_homolog_v2.jpeg", p2,
+        width = 30, height = 10, units = "cm")
+
+  
+rm(p1, p2, p3, Brapa_input, Arab_input, data_input)
+```
+
+
+# 2. Plot "Mean number of TF binding sites for each TF per promoter" Brapa vs Arabidopsis
+## look on each homeolog separately, compare A.thaliana vs B.rapa for each homolog group
+"LF gene"	"MF1 gene"	"MF2 gene"
+```{r}
+Brapa_input <- Brapa3_TF_results_orthologs %>% 
+  group_by(motif, homoeolog, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(motif, homoeolog) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) %>% ungroup()
+
+Arab_input <- Ara_TF_results_orthologs %>% 
+  group_by(motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) %>% ungroup()
+
+
+setdiff(Arab_input$motif, Brapa_input$motif)
+
+
+length(unique(Arab_input$))
+length(unique(Brapa_input$motif))
+
+```
+
+
+
+
+```{r}
+Arab_input_h1 <- Ara_TF_results_orthologs %>% 
+  inner_join(., (Brapa3_TF_results_orthologs %>% 
+  filter(homoeolog == 1) %>% select(AGI, homoeolog) %>% unique), by=c("gene_id" = "AGI")) %>% 
+  group_by(homoeolog, motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(homoeolog, motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Arab_input_h2 <- Ara_TF_results_orthologs %>% 
+  inner_join(., (Brapa3_TF_results_orthologs %>% 
+  filter(homoeolog == 2) %>% select(AGI, homoeolog) %>% unique), by=c("gene_id" = "AGI")) %>%
+  group_by(homoeolog, motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(homoeolog, motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Arab_input_h3 <- Ara_TF_results_orthologs %>% 
+  inner_join(., (Brapa3_TF_results_orthologs %>% 
+  filter(homoeolog == 3) %>% select(AGI, homoeolog) %>% unique), by=c("gene_id" = "AGI")) %>% 
+  group_by(homoeolog, motif, gene_id) %>% 
+  summarise("N_bs_TF_promoter" = n()) %>% 
+  group_by(homoeolog, motif) %>% 
+  summarise("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) 
+
+Arab_input <- bind_rows(Arab_input_h1, Arab_input_h2, Arab_input_h3) %>% ungroup()
+Brapa_input 
+Arab_input 
+
+data_input <- full_join(Brapa_input, Arab_input, by = c("motif", "homoeolog"), suffix = c("_Brapa", "_Arab")) 
+
+data_input_1 <- inner_join(Brapa_input, Arab_input, by = c("motif", "homoeolog"), suffix = c("_Brapa", "_Arab"))
+
+data_input[is.na(data_input$mean_bs_TF_promoter_Arab),]
+
+p1 <- ggplot(data_input, mapping = aes(mean_bs_TF_promoter_Brapa, mean_bs_TF_promoter_Arab, colour = homoeolog)) +
+  geom_point() +
+  # ylim(0,max(Brapa_input$mean_bs_TF_promoter)) +
+  labs(title = "Mean number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  geom_smooth(method=lm, se=FALSE, fullrange = TRUE) + # Remove confidence intervals # Extend the regression lines
+  scale_x_continuous(trans='log2') +
+  scale_y_continuous(trans='log2')
+                                    
+
+ggplot(data_input, mapping = aes(mean_bs_TF_promoter_Brapa, mean_bs_TF_promoter_Arab, colour = homoeolog)) +
+  geom_point() +
+  # ylim(0,max(Brapa_input$mean_bs_TF_promoter)) +
+  labs(title = "Mean number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  facet_wrap(.~homoeolog)
+
+length(unique(Ara_TF_results_orthologs[str_detect(Ara_TF_results_orthologs$motif, "MYBrelated_tnt.AT4G12670_col_a_m1"), ]))
+test_1 <- Ara_TF_results_orthologs[str_detect(Ara_TF_results_orthologs$motif, "AP2EREBP_tnt.ERF9_col_a_m1"),]
+Arab_input_h3[str_detect(Arab_input_h3$motif, "AP2EREBP_tnt.ERF9_col_a_m1"),]
+unique(test_1$gene_id)
+
+
+Brapa3_TF_results_orthologs %>% 
+  filter(homoeolog == 2) %>% select(AGI, homoeolog) %>%  unique()
+
+Brapa3_TF_results_orthologs %>% 
+  select(AGI, homoeolog) %>%  unique()
+
+setdiff(Ara_TF_results_orthologs$motif, Brapa3_TF_results_orthologs$motif)
+
+Brapa3_TF_results_orthologs$motif[!(Brapa3_TF_results_orthologs$motif %in% Ara_TF_results_orthologs$motif)]
+
+```
+
+# TF appearing in one but not another species, for example "ND_tnt.FRS9_colamp_a_m" in ortholog of "AT1G14230" in Brapa:
+There are examples of genes which lost/gain TF binding sites in Arabidopsis vs Braca: AT1G14230 lost TF bs of ND_tnt.FRS9_colamp_a_m, however, BraA06g010350.3C (homologue 1) gain TF bs (still very weak, score.pct 65).
+
+```{r}
+
+setdiff(union(Brapa_input$motif, Arab_input$motif), intersect(Brapa_input$motif, Arab_input$motif))
+setdiff(Brapa_input$motif, Arab_input$motif)
+setdiff(Arab_input$motif, Brapa_input$motif)
+
+Brapa3_TF_results_orthologs[str_detect(Brapa3_TF_results_orthologs$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Ara_TF_results_orthologs[str_detect(Ara_TF_results_orthologs$motif, "ND_tnt.FRS9_colamp_a_m"),]
+
+length(unique(Ara_TF_results_orthologs[str_detect(Ara_TF_results_orthologs$motif, "ND_tnt.FRS9_colamp_a_m"),2]))
+# 12
+
+data_input[str_detect(data_input$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Brapa_input[str_detect(Brapa_input$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Arab_input[str_detect(Arab_input$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Arab_input_h1[str_detect(Arab_input_h1$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Arab_input_h2[str_detect(Arab_input_h2$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Arab_input_h3[str_detect(Arab_input_h3$motif, "ND_tnt.FRS9_colamp_a_m"),]
+
+
+Brapa3_TF_results_orthologs[str_detect(Brapa3_TF_results_orthologs$motif, "ABI3VP1_tnt.AT5G18090_col_a_m1"),]
+Ara_TF_results_orthologs[str_detect(Ara_TF_results_orthologs$motif, "ABI3VP1_tnt.AT5G18090_col_a_m1"),]
+
+Brapa3_TF_results_orthologs[str_detect(Brapa3_TF_results_orthologs$motif, "ND_tnt.FRS9_colamp_a_m"),]
+Brapa3_TF_results_orthologs[Brapa3_TF_results_orthologs$AGI  %in%  Ara_TF_results_orthologs[str_detect(Ara_TF_results_orthologs$motif, "ND_tnt.FRS9_colamp_a_m"), 2],]
+
+
+```
+
+
+```{r}
+# data <- data %>% 
+#   mutate(ratio = mean_bs_TF_promoter.x/mean_bs_TF_promoter.y) %>% arrange(desc(ratio))
+```
+
+# 2. Plot "Total number of TF binding sites" Brapa vs Arabidopsis
+```{r}
+Brapa_data <- Brapa3_TF_results_orthologs %>% 
+  group_by(motif) %>% 
+  summarise("N_bs_TF_brapa" = n()) %>% arrange(desc(N_bs_TF_brapa))
+
+Arab_data <- Ara_TF_results_orthologs %>% 
+  group_by(motif) %>% 
+  summarise("N_bs_TF_Ara" = n()) %>% arrange(N_bs_TF_Ara)
+
+Brapa_data 
+Arab_data
+
+data <- full_join(Brapa_data, Arab_data, by = "motif")
+
+ggplot(data, mapping = aes(N_bs_TF_brapa, N_bs_TF_Ara)) +
+  geom_point() +
+  xlim(0,max(data$N_bs_TF_brapa)) +
+  ylim(0,max(data$N_bs_TF_brapa)) +
+  labs(title = "Total number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa")
+
+ggplot(data) +
+  geom_histogram(mapping = aes(N_bs_TF_brapa))
+
+ggplot(data) +
+  geom_histogram(mapping = aes(N_bs_TF_Ara))
+
+data %>% 
+  filter(N_bs_TF_brapa < 100) %>% summarise(n())
+# 14
+data %>% 
+  filter(N_bs_TF_Ara < 100) %>% summarise(n())
+# 31
+```
+
+# 3. Plot "Relative number of TF binding sites per promoter" Brapa vs Arabidopsis
+```{r}
+data <- data %>% 
+  mutate(relN_bs_TF_brapa = 100*N_bs_TF_brapa/sum(N_bs_TF_brapa), relN_bs_TF_Ara = 100*N_bs_TF_Ara/sum(N_bs_TF_Ara))
+
+ggplot(data, mapping = aes(relN_bs_TF_brapa, relN_bs_TF_Ara)) +
+  geom_point() +
+  # xlim(0,max(data$N_bs_TF_brapa)) +
+  # ylim(0,max(data$N_bs_TF_brapa)) +
+  labs(title = "Relartive number of TF binding sites per promoter",
+       y = "Arabidopsis",
+       x = "Brapa")
+
+```
+
+# 4. Plot "Relative number of promoters bound by TF in Brapa homoeologs" Brapa vs Arabidopsis
+## Number of promoters have been normalised by total number of promoters in each homeolog group
+```{r}
+Brapa_input <- Brapa3_TF_results_orthologs %>% 
+  group_by(gene_id, homoeolog, motif) %>% 
+  summarise("N_bs_TF_promoter_B" = n()) %>%
+  group_by(motif, homoeolog) %>% 
+  mutate(N_promoters = n(), mean_N_bs_TF_promoter_B = mean(N_bs_TF_promoter_B)) %>% arrange(gene_id, motif) %>% 
+  group_by(homoeolog) %>% 
+  mutate("rel_N_promoters_B" = N_promoters/sum(N_promoters)) %>% ungroup() %>% 
+  select(-gene_id, -N_bs_TF_promoter_B) %>% unique()
+ 
+
+ Arab_input <- Ara_TF_results_orthologs %>% 
+  group_by(gene_id, motif) %>% 
+  summarise("N_bs_TF_promoter_A" = n()) %>% 
+  group_by(motif) %>% 
+  mutate(N_promoters = n(), mean_N_bs_TF_promoter_A = mean(N_bs_TF_promoter_A)) %>% arrange(motif) %>% 
+  ungroup() %>%  
+  mutate("rel_N_promoters_A" = N_promoters/sum(N_promoters)) %>% 
+  select(-gene_id, -N_bs_TF_promoter_A) %>% unique()
+ 
+ input <- full_join(Brapa_input, Arab_input, by = "motif")
+ 
+ 
+p1 <-  ggplot(input, mapping = aes(rel_N_promoters_B, rel_N_promoters_A, color = homoeolog)) +
+  geom_point() +
+  # xlim(0,max(input$rel_N_promoters_A)) +
+  # ylim(0,max(input$rel_N_promoters_A)) +
+  labs(title = "Relartive number of promoters having TF binding sites in Brapa homoeologs",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  geom_smooth(method=lm, se=FALSE, fullrange = TRUE) # Remove confidence intervals  # Extend the regression lines
+ 
+Brapa_input_v1 <-   Brapa3_TF_results_orthologs %>% 
+  group_by(gene_id, homoeolog, motif) %>% 
+  summarise("N_bs_TF_promoter_B" = n()) %>%
+  group_by(motif, homoeolog) %>% 
+  mutate(N_promoters = n(), mean_N_bs_TF_promoter_B = mean(N_bs_TF_promoter_B)) %>% arrange(gene_id, motif) %>% 
+  # group_by(homoeolog) %>% 
+  ungroup() %>% select(-gene_id, -N_bs_TF_promoter_B) %>% unique() %>% 
+  group_by(homoeolog) %>% summarise(sum(N_promoters)) %>% 
+  mutate("rel_N_promoters_B" = N_promoters/sum(N_promoters)) 
+%>% ungroup() %>% 
+  select(-gene_id, -N_bs_TF_promoter_B) %>% unique()
+
+input <- full_join(Brapa_input_v1, Arab_input, by = "motif")
+ 
+```
+
+```{r eval=FALSE, include=FALSE}
+# dir.create("Plots/Brapa_promoters_analysis_distance/BrapaVsArab")
+# basic plot
+p1 <- ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_rel_N_promoters_TF_BrapaVsArab_homolog_v1.jpeg", p1,
+        width = 15, height = 15, units = "cm")
+  
+rm(p1, Brapa_input, Arab_input, input)
+```
+
+# 5. Plot "Relative number of promoters bound by TF" Brapa vs Arabidopsis
+## Number of promoters have been normalised by total number of promoters
+```{r}
+Brapa_input <-   Brapa3_TF_results_orthologs %>% 
+  group_by(gene_id, motif) %>% 
+  summarise("N_bs_TF_promoter_B" = n()) %>%
+  group_by(motif) %>% 
+  mutate(N_promoters = n(), mean_N_bs_TF_promoter_B = mean(N_bs_TF_promoter_B)) %>% arrange(gene_id, motif) %>% 
+  ungroup() %>% 
+  mutate("rel_N_promoters_B" = N_promoters/sum(N_promoters)) %>% 
+  select(-gene_id, -N_bs_TF_promoter_B) %>% unique()
+ 
+
+ Arab_input <-   Ara_TF_results_orthologs %>% 
+  group_by(gene_id, motif) %>% 
+  summarise("N_bs_TF_promoter_A" = n()) %>% 
+  group_by(motif) %>% 
+  mutate(N_promoters = n(), mean_N_bs_TF_promoter_A = mean(N_bs_TF_promoter_A)) %>% arrange(motif) %>% 
+  ungroup() %>%  
+  mutate("rel_N_promoters_A" = N_promoters/sum(N_promoters)) %>% 
+  select(-gene_id, -N_bs_TF_promoter_A) %>% unique()
+ 
+ input <- full_join(Brapa_input, Arab_input, by = "motif")
+ 
+ 
+p1 <-  ggplot(input, mapping = aes(rel_N_promoters_B, rel_N_promoters_A)) +
+  geom_point() +
+  # xlim(0,max(input$rel_N_promoters_A)) +
+  # ylim(0,max(input$rel_N_promoters_A)) +
+  labs(title = "Relartive number of promoters having TF binding sites",
+       y = "Arabidopsis",
+       x = "Brapa") +
+  geom_smooth(method=lm, se=FALSE, fullrange = TRUE) # Remove confidence intervals  # Extend the regression lines
+ 
+library("ggpubr")
+p2 <- ggscatter(input, x = "rel_N_promoters_B", y = "rel_N_promoters_A", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Brapa", ylab = "Arabidopsis", title = "Relartive number of promoters having TF binding sites")
+p2
+```
+
+```{r eval=FALSE, include=FALSE}
+# dir.create("Plots/Brapa_promoters_analysis_distance/BrapaVsArab")
+# basic plot
+p1 <- ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_rel_N_promoters_TF_BrapaVsArab_v1.jpeg", p1,
+        width = 15, height = 15, units = "cm")
+p2 <- ggsave("Plots/Brapa_promoters_analysis_distance/BrapaVsArab/Brapa_promoters_analysis_distance_rel_N_promoters_TF_BrapaVsArab_v2.jpeg", p2,
+        width = 15, height = 15, units = "cm")
+    
+rm(p1, p2, Brapa_input, Arab_input, data_input)
+```
+
+
+# prepare data for following analysis
+```{r}
+####--------#####
+calculus_Brapa3_TF_results_homoeolog <- Brapa3_TF_results_orthologs %>% 
+  group_by(motif, gene_id) %>% 
+  mutate("N_bs_TF_promoter" = n()) %>%  # "N_bs_TF_promoter" for number of binding sites TF is bound on each promoters
+  group_by(motif) %>% 
+  mutate("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) %>%  # "mean_bs_TF_promoter" for mean number of bs in promoter 
+  group_by(motif) %>% mutate("tot_N_bs_TF" = n()) %>% # total number of "bs" (for binding sites) for each TF
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ungroup()
+
+
+# calculus_Brapa3_TF_results_homoeolog %>% 
+#   ggplot() +
+#   geom_point(aes(x = log10(N_promoters_TF), y = tot_N_bs_TF)) +
+#   geom_vline(xintercept = 3)
+
+
+Brapa3_TF_results_orthologs %>% 
+  group_by(motif, gene_id) %>% 
+  mutate("N_bs_TF_promoter" = n()) %>%  # "N_bs_TF_promoter" for number of binding sites TF is bound on each promoters
+  group_by(motif) %>% 
+  mutate("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) %>%  # "mean_bs_TF_promoter" for mean number of bs each TF is bound in promoter
+  group_by(motif) %>% mutate("tot_N_bs_TF" = n())
+```
+
+# 1.
+# Plot total N of bs of TF vs N of promoters it bounds
+```{r}
+
+calculus_Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id, N_promoters_TF, tot_N_bs_TF) %>% 
+  unique() %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = tot_N_bs_TF)) +
+  geom_vline(xintercept = 3)
+```
+
+
+

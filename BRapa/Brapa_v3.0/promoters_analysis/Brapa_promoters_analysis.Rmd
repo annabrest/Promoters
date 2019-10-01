@@ -1,0 +1,1128 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(gplots)
+
+library(randomForest)
+library(broom) # create dataframe from statistical tests outputs
+library(gridExtra) # to save ggplots on 1 page
+
+# library(plyr) # to round up to tearest 10; problem with some dplyr comands
+
+library(rtracklayer)
+library(Biostrings)
+library(GenomicRanges)
+
+source("~/Work/2019/Analysis/Utilities_R/Functions/My_functions.R")
+
+set.seed(100)
+```
+# ro18_chiifu_scaled <- read.delim("~/Work/2019/Data/JIC/Brapa/subfunctionalised_expression/ro18_chiifu_scaled.tsv", stringsAsFactors=FALSE)
+# ro18_chiifu <- read.delim("~/Work/2019/Data/JIC/Brapa/subfunctionalised_expression/ro18_chiifu.tsv", stringsAsFactors=FALSE)
+
+# load DATA
+
+```{r}
+load("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters_analysis/data/data_to_load/Brapa_promoters_load.RData")
+
+# Brapa3_genomes_full <- read.delim("~/Work/2019/Data/JIC/Brapa/reference/3genomes_AKBr_v3_1810.txt", header=FALSE, stringsAsFactors=FALSE)
+# Brapa3_promoters1500_annotation # gff3 file of annotated promoters
+# Brapa3_promoters1500_txt_GR ## sequence of promoters as GR object
+# Brapa3_TF_results_scan
+# 
+# # load("~/Work/2019/Analysis/Arabidopsis/Exploratory_analysis/Data/to_load/TF_binding_sites_distribution.RData")
+# Ara_promoters1500_annotation <- import.gff3("~/Work/2019/Analysis/Promoters/promoters_1500.gff3")
+# Ara_TF_results_scan <- read_csv("~/Work/2019/Analysis/TF_binding/analysed_data/TF_scan_results_promoters1500_TF_family_v1.csv" )
+# 
+# # result of clustering of variable genes by clust without optimisation
+# clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op <- read.csv("~/Work/2019/Analysis/Arabidopsis/Expression/Clust_phyton/updated_promoter/clust_output_expression/clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op.csv", stringsAsFactors=FALSE)
+
+
+```
+
+
+# Pre-process and combine Brapa3_genomes with Brapa TF predicted binding data
+```{r}
+Brapa3_genomes <- select(Brapa3_genomes_full, -V3) %>% 
+  select(V1, "AGI" = V2, "Genome" = V4, "1" = V5, "2" = V6, "3" = V7) %>% 
+  gather("homoeolog", "gene_id", -AGI, -Genome, -V1) %>%  filter(gene_id != "-")
+
+length(unique(Brapa3_genomes$V1)) 
+length(Brapa3_genomes$V1)
+# [1] 34445 unique Brasicca genes
+
+# homoeologs with no orthologs in Arabidopsis 
+table(filter(Brapa3_genomes, AGI == "-")$homoeolog)
+length(filter(Brapa3_genomes, AGI == "-")$homoeolog)
+#[1] 5258
+
+# Add column with family name
+Brapa3_TF_results_scan <- Brapa3_TF_results_scan %>%  mutate(TF_family = str_remove(motif, "\\..*$"))
+length(unique(Brapa3_TF_results_scan$sequence))
+# [1] 43961
+
+Brapa3_TF_results_homoeolog <- inner_join(Brapa3_TF_results_scan, Brapa3_genomes, by = c("sequence" = "gene_id"))
+dim(Brapa3_TF_results_homoeolog)
+#[1] 4936837      16
+
+length(unique(Brapa3_TF_results_homoeolog$sequence))
+# [1] 33550 genes remained after merging
+
+
+```
+
+## Add distanse from TF binding site to TSS
+```{r}
+Brapa3_TF_results_homoeolog <- data.frame("promoter_width" = width(Brapa3_promoters1500_annotation),
+          "gene_id" = mcols(Brapa3_promoters1500_annotation)$ID, 
+          "strand" = strand(Brapa3_promoters1500_annotation)) %>% 
+          inner_join(., select(Brapa3_TF_results_homoeolog, -strand), by = c("gene_id" = "sequence"))
+
+
+# Check the number of the unique genes in the resulting table: 
+length(unique(Brapa3_TF_results_homoeolog$gene_id))
+
+# Calculate distance from TF_binding to TSS (promoter_width - TF_start)
+Brapa3_TF_results_homoeolog$distance_to_TSS <- Brapa3_TF_results_homoeolog$promoter_width -
+                                               Brapa3_TF_results_homoeolog$start + 1
+```
+
+#########---------Trail-------########
+####-------test---------####
+
+```{r}
+ Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(distance_to_TSS), score.pct = as.factor(score.pct)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n()) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_score = n()) %>% 
+  filter(distance_to_TSS == "473")
+
+
+
+############
+Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(distance_to_TSS), score.pct = as.factor(score.pct)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n()) %>% filter(distance_to_TSS == "473", score.pct == "99.9867578373472")
+
+Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(distance_to_TSS), score.pct = as.factor(score.pct)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n()) %>% filter(distance_to_TSS == "473") %>% 
+ group_by(score.pct) %>% 
+  mutate(N_score = n()) 
+################
+
+test <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(distance_to_TSS), score.pct = as.factor(round(score.pct))) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(score.pct) %>% 
+  mutate(N_score = n(), N_rel = N_score/N_total) %>% 
+  select(distance_to_TSS, N_rel) %>% ungroup()
+  unique() %>% 
+  spread(., distance_to_TSS, N_rel)
+
+test[c(137, 1819, 1924, 2961, 4129),]
+
+spread(., distance_to_TSS) %>% 
+spread(., distance_to_TSS, N_total)
+
+
+###########
+
+test <- 
+  
+  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(round_any(distance_to_TSS, 10, f = ceiling)), score.pct = as.factor(round_any(score.pct, 5, f = ceiling))) %>% 
+  group_by(distance_to_TSS) %>% 
+  dplyr::mutate(N_total = n())  %>% 
+  group_by(score.pct) %>% 
+  mutate(N_score = n(), N_rel = N_score/N_total) %>% 
+  select(distance_to_TSS, N_rel) %>% ungroup()
+  unique() %>% 
+  spread(., distance_to_TSS, N_rel)
+
+
+
+library(plyr) # to round up to nearest 10
+round_any(x[1300:1500], 10, f = ceiling)
+
+# or
+
+round(x[1:10], -0.5)
+
+
+
+test <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(round(distance_to_TSS, -1)), score.pct = as.factor(round(score.pct, -1))) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  unique() %>% 
+  spread(., distance_to_TSS, N_rel) %>%
+  mutate_at(vars(-1), list(~replace(., is.na(.), 0)))
+  
+
+  
+```
+####-------test---------####
+# matrix for heatmap
+```{r}
+test <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(round(distance_to_TSS, -1)), score.pct = as.factor(round(score.pct, -1))) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() %>% 
+  spread(., distance_to_TSS, N_rel) %>%
+  mutate_at(vars(-1), list(~replace(., is.na(.), 0))) %>%  arrange(score.pct)
+  
+apply(test[4:150], 2, function(x) max(x))
+
+```
+####-------test---------####
+```{r}
+test <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = as.factor(round(distance_to_TSS, -1)), score.pct = as.factor(round(score.pct, -1))) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() %>% mutate(distance_to_TSS = as.numeric(distance_to_TSS), score.pct = as.numeric(score.pct))
+
+test %>% 
+  ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+  geom_point()
+
+
+test_1 <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = round(distance_to_TSS, -1), score.pct = round(score.pct, 1)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() 
+
+test_2 <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = round(distance_to_TSS, -1), score.pct = round(score.pct)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() 
+
+test_3 <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[1]) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = round(distance_to_TSS, -1), score.pct = round(score.pct, -1)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() 
+
+
+test_1 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score.pct, colour = N_rel))
+
+test_2 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score.pct, alpha = N_rel), colour = "blue")
+
+test_2 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score.pct, colour = N_rel))
+
+test_3 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score.pct, colour = N_rel))
+
+##########
+TF_family[3]
+test_2 <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = round(distance_to_TSS, -1), score.pct = round(score.pct)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score.pct) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() 
+
+
+test_2 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score.pct, alpha = N_rel), colour = "blue")
+
+
+
+###################
+TF_family[3]
+test_5 <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  select(score, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = round(distance_to_TSS, -1), score = round(score)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() 
+
+
+test_2 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score.pct, alpha = N_rel), colour = "blue")
+
+test_5 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score, alpha = N_rel), colour = "blue")
+
+
+```
+####-------test---------####
+```{r}
+test_5 <- Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  select(score, distance_to_TSS) %>% 
+  mutate(distance_to_TSS = round(distance_to_TSS, -1), score = round(score)) %>% 
+  group_by(distance_to_TSS) %>% 
+  mutate(N_total = n())  %>% 
+  group_by(distance_to_TSS, score) %>% 
+  mutate(N_score = n(), N_rel = (N_score/N_total)*100) %>% ungroup() %>% 
+  select(-N_total, -N_score) %>% 
+  unique() 
+
+
+test_5 %>% 
+  ggplot() +
+  geom_point(aes(x = distance_to_TSS, y = score, alpha = N_rel), colour = "blue")
+
+
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score.pct, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = TF_family[3]) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+   
+
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+     filter(score > 20, distance_to_TSS < 250) %>%  arrange(desc(score.pct))
+   
+   
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+     filter(score > 30) %>%  arrange(desc(score.pct))
+   
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+     arrange(desc(score.pct), score, distance_to_TSS)
+```
+
+
+
+# heatmap
+```{r}
+# pdf(paste0(Path_to_plot, Title_plot,"_dend_TF_v1", ".pdf"))
+# par(cex.main=1)
+plot_matrix <- test %>% select(-score.pct)
+heatmap(as.matrix(plot_matrix),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,10,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          #main=Title_plot,
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+# 
+# dev.off()
+
+```
+
+################
+################
+################
+
+# Plot Brapa_distance_to_TSS_vs_TF_binding_score
+```{r}
+TF_family <- unique(Brapa3_TF_results_homoeolog$TF_family)
+
+
+ # Check max score for family:   
+ Brapa3_TF_results_homoeolog %>% 
+  group_by(TF_family) %>% 
+  summarise(TF_max_score = max(max.score)) %>% 
+   arrange(desc(TF_max_score))
+ 
+ # Plot results for all families:
+ plot <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_y_continuous(limits = c(0, 70))
+   ) 
+
+
+j <- 1
+k <- 16
+ for (i in 1:4){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", i, ".jpeg"), marrangeGrob(grobs = plot[j:k], nrow=4, ncol=4))
+ j <- j+16
+ k <- k + 16
+ }
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 1, ".jpg"), marrangeGrob(grobs = plot[1:16], nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 2, ".jpg"), marrangeGrob(grobs = plot[17:32], nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 3, ".jpg"), marrangeGrob(grobs = plot[33:48], nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 4, ".jpg"), marrangeGrob(grobs = plot[49:56], nrow=4, ncol=4))
+
+
+ plot1 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+   ) 
+ 
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 1, ".jpg"), marrangeGrob(grobs = plot1[1:16], nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 2, ".jpg"), marrangeGrob(grobs = plot1[17:32], nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 3, ".jpg"), marrangeGrob(grobs = plot1[33:48], nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 4, ".jpg"), marrangeGrob(grobs = plot1[49:56], nrow=4, ncol=4))
+```
+
+####-----test------####
+# Summarise DATA: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
+# Create bar_plot
+
+```{r} 
+test <-  Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == "BBRBPC_tnt") %>%
+   group_by(Genome, motif) %>% 
+   mutate(N = n()) %>% group_by(Genome) %>% mutate(rel_N = N/length(unique(gene_id))) 
+
+table(test$N_genes)
+table(test$N)
+
+
+test %>% 
+  ggplot(aes(Genome)) + 
+  geom_bar()
+
+test %>% 
+  ggplot(aes(Genome, rel_N)) + 
+  geom_col()
+
+
+ Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == "BBRBPC_tnt")
+ 
+   
+ 
+  # Brapa3_TF_results_homoeolog %>% 
+  #  select(gene_id, Genome) %>% unique() %>% 
+  #   filter(Genome == "A")
+  
+  Brapa3_TF_results_homoeolog %>% 
+   select(gene_id, Genome) %>% unique() %>% 
+   group_by(Genome) %>% summarise(N = n()) %>% 
+  ggplot(aes(Genome, N)) + 
+  geom_col()
+  
+  Brapa3_TF_results_homoeolog %>% 
+   select(motif, Genome) %>% unique() %>% 
+   group_by(Genome) %>% summarise(N = n()) %>% 
+  ggplot(aes(Genome, N)) + 
+  geom_col()
+  
+# Brapa3_TF_results_homoeolog %>% 
+#    select(gene_id, Genome) %>% 
+#   ggplot(aes(Genome)) + 
+#   geom_bar()
+  
+ # calculate N_genes: 
+  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[3]) %>%
+   select(gene_id, Genome) %>%  
+   group_by(Genome) %>% summarise(N = n()) %>% 
+  ggplot(aes(Genome, N)) + 
+  geom_col()
+  
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome) %>%  
+   group_by(Genome) %>% summarise(N = n()) %>% 
+  ggplot(aes(Genome, N)) + 
+  geom_col()
+  
+  #  (Brapa3_TF_results_homoeolog %>% 
+  #   filter(TF_family == TF_family[3]) %>%
+  #  select(motif, Genome) %>% unique() %>% 
+  #  group_by(Genome) %>% summarise(N = n()))$N/
+  #   ( Brapa3_TF_results_homoeolog %>% 
+  # filter(TF_family == TF_family[3]) %>%
+  #  select(gene_id, Genome) %>% unique() %>% 
+  #  group_by(Genome) %>% summarise(N = n()))$N 
+  # 
+  
+  
+  
+# Calculate N of TF bindong sites, N_genes and (N of TF bindong sites)/N_genes in each genome block    
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome, gene_id) %>%
+   group_by(Genome) %>% mutate(N_TF_bs = length(Genome), N_genes = length(unique(gene_id)), N_rel = length(Genome)/length(unique(gene_id)))
+    
+# Calculate N of TF bindong sites in each genome block  
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome) %>%  
+   group_by(Genome) %>% mutate(N_TF_bs = length(Genome)) 
+ 
+# or 
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome) %>% 
+   group_by(Genome) %>% summarise(N = n())
+  
+  
+  # test lenght of "U"
+ test_3 <-  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3], Genome == "U")
+ length(unique(test_3$gene_id))
+  [1] 2409 
+ 
+ Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == TF_family[3]) %>%
+   select(gene_id, Genome) %>%  unique() %>% 
+   group_by(Genome) %>% summarise(N = n()) %>% 
+   filter( Genome == "S")
+ 
+Brapa3_TF_results_homoeolog %>%
+  filter(TF_family == TF_family[3]) %>%
+   select(gene_id, Genome) %>%  
+   group_by(Genome) %>% unique() %>% summarise(N = n()) %>%
+  ggplot(aes(Genome, N)) +
+  geom_col()
+  
+   
+ 
+   Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome, gene_id) %>%
+   group_by(Genome) %>% mutate(N_TF_bs = length(Genome), N_genes = length(unique(gene_id)), N_rel = length(Genome)/length(unique(gene_id))) %>% 
+     filter( Genome == "S")
+   
+  
+   
+ ##########
+  
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome, gene_id) %>%
+   group_by(Genome) %>% mutate(N_TF_bs = length(Genome), N_genes = length(unique(gene_id)), N_rel = length(Genome)/length(unique(gene_id))) %>% 
+    ggplot(aes(Genome, N_TF_bs)) + 
+    geom_col()
+  
+  
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome, gene_id) %>%
+   group_by(Genome) %>% mutate(N_TF_bs = length(Genome), N_genes = length(unique(gene_id)), N_rel = length(Genome)/length(unique(gene_id))) %>% 
+    ggplot(aes(Genome, N_genes)) + 
+    geom_col()
+  
+   Brapa3_TF_results_homoeolog %>%
+  filter(TF_family == TF_family[3]) %>%
+   select(gene_id, Genome) %>%  
+   group_by(Genome) %>% unique() %>% summarise(N = n()) %>%
+  ggplot(aes(Genome, N)) +
+  geom_col()
+
+  Brapa3_TF_results_homoeolog %>% 
+    filter(TF_family == TF_family[3]) %>%
+   select(motif, Genome, gene_id) %>%
+   group_by(Genome) %>% mutate(N_TF_bs = length(Genome), N_genes = length(unique(gene_id)), N_rel = length(Genome)/length(unique(gene_id))) %>% 
+    ggplot(aes(Genome, N_rel)) + 
+    geom_col()
+ 
+```
+
+
+####--------##########
+
+# Plot: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
+```{r}
+plot2 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(Genome), ncol = 5) 
+   ) 
+ 
+
+j <- 1
+k <- 4
+ for (i in 1:(length(TF_family)/4)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups", i, ".jpg"),
+         marrangeGrob(grobs = plot2[j:k], nrow=2, ncol=2))
+ j <- j + 4
+ k <- k + 4
+ }
+```
+
+```{r}
+Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == "BBRBPC_tnt") %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = TF_family[1]) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3) + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines")) 
+ 
+
+#  theme(strip.text = element_text(face="bold", size=8),
+        
+ plot_3 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none")  +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3)  + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines"))  
+   ) 
+ 
+# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
+j <- 1
+k <- 8
+ for (i in 1 : (length(TF_family)/8)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog", i, ".jpg"),
+         marrangeGrob(grobs = plot_3[j:k], nrow=4, ncol=2))
+ j <- j + 8
+ k <- k + 8
+ }
+
+####---log(y)
+ plot_4 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = log(score))) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none")  +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3)  + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines"),
+            title = element_text(size = 10))
+   ) 
+ 
+# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
+j <- 1
+k <- 8
+ for (i in 1 : (length(TF_family)/8)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog/Brapa_distance_to_TSS_vs_TF_binding_log_score_by_homoeolog", i, ".jpg"),
+         marrangeGrob(grobs = plot_4[j:k], nrow=4, ncol=2))
+ j <- j + 8
+ k <- k + 8
+ }
+
+plot_4[[2]]
+```
+
+```{r}
+Brapa3_genomes_full
+Brapa3_promoters1500_annotation
+levels(seqnames(Brapa3_promoters1500_annotation))[1:20]
+
+```
+
+# Plot "distance_to_TSS" vs "score" and "score.pct" for "ARF_tnt"
+## Plot separately for each TF in this family
+
+```{r}
+p_1 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score )) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_2 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_3 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score)) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  facet_grid(~ as.factor(motif)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_4 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  facet_grid(~ as.factor(motif)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# p_5 <-  Brapa3_TF_results_homoeolog %>% 
+#   filter(TF_family == "ARF_tnt", motif == "ARF_tnt.ARF2_col_v31_m1") %>% 
+#   ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+#   geom_point(colour = "blue", alpha = 0.15) +
+#   labs(title = TF_family[3]) +
+#   theme_minimal() +
+#   theme(legend.position = "none")
+# 
+
+p_1
+p_2
+p_3
+p_4
+
+# dir.create("Plots/Meeting")
+# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF.jpg"), 
+#          marrangeGrob(grobs = list(p_1, p_2, p_3, p_4), nrow=2, ncol=2))
+
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v1.jpg"), 
+         marrangeGrob(grobs = list(p_1, p_2), nrow=1, ncol=2))
+
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v2.jpg"), 
+         marrangeGrob(grobs = list(p_3, p_4), nrow=2, ncol=1))
+
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF.jpg"), p_1)
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF.jpg"), p_2)
+
+# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v3.jpg"), p_3)
+# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF_v4.jpg"), p_4)
+
+
+```
+
+
+# Pre-process and combine Ara_bidopsis TF predicted binding data, cluster info and distance to TSS
+```{r}
+Ara_TF_results_scan
+Ara_promoters1500_annotation
+clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op #extract cluster number, add "0" if not in the list of expressed/variable genes
+
+# Add cluster number, add "0" if not in the list of expressed/variable genes
+Ara_TF_results_scan <- Ara_TF_results_scan %>% 
+  left_join(., unique(select(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op, cluster, AGI)), by = c("sequence" = "AGI")) %>% 
+  mutate_at(vars(-1), list(~replace(., is.na(.), 0)))
+
+# 3,109,838 rows
+```
+
+
+# Add distanse of TF from TSS
+```{r}
+Ara_TF_results_scan <- data.frame("promoter_width" = width(Ara_promoters1500_annotation), 
+              "gene_id" = mcols(Ara_promoters1500_annotation)$gene_id,
+              "strand" = strand(Ara_promoters1500_annotation)) %>% 
+              inner_join(., select(Ara_TF_results_scan, -strand), by = c("gene_id" = "sequence"))
+
+# 3,109,838 
+
+Ara_TF_results_scan$distance_to_TSS <- Ara_TF_results_scan$promoter_width -
+                                               Ara_TF_results_scan$start + 1
+
+```
+
+`
+# Plot Ara_distance_to_TSS_vs_TF_binding_score
+```{r}
+#TF_family <- unique(Brapa3_TF_results_homoeolog$TF_family)
+
+
+ # Check max score for family:   
+ Ara_TF_results_scan %>% 
+  group_by(TF_family) %>% 
+  summarise(TF_max_score = max(max.score)) %>% 
+   arrange(desc(TF_max_score))
+ 
+ # Plot results for all families:
+
+ plot_5 <- lapply(TF_family, function(x)
+   Ara_TF_results_scan %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_y_continuous(limits = c(0, 70))
+   ) 
+
+#dir.create("Plots/Arabidopsis")
+j <- 1
+k <- 16
+ for (i in 1:4){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_fixed_y_", i, ".jpg"), 
+         marrangeGrob(grobs = plot_5[j:k], nrow=4, ncol=4))
+ j <- j+16
+ k <- k + 16
+   } else {ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_fixed_y_", i, ".jpg"), 
+                  marrangeGrob(grobs = plot_5[j:length(TF_family)], nrow=4, ncol=4))
+ } 
+}
+
+
+ plot_6 <- lapply(TF_family, function(x)
+   Ara_TF_results_scan %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+   ) 
+ 
+ 
+j <- 1
+k <- 16
+ for (i in 1:4){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_free_y_", i, ".jpg"), 
+         marrangeGrob(grobs = plot_6[j:k], nrow=4, ncol=4))
+ j <- j+16
+ k <- k + 16
+   } else {ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_free_y_", i, ".jpg"), 
+                  marrangeGrob(grobs = plot_6[j:length(TF_family)], nrow=4, ncol=4))
+ } 
+}
+
+
+```
+
+
+```{r}
+ plot_7 <- lapply(TF_family, function(x)
+   Ara_TF_results_scan %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(cluster), ncol = 5) 
+   ) 
+ 
+# dir.create("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster")
+
+j <- 1
+k <- 4
+ for (i in 1: (length(TF_family)/4)){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster_", i, ".jpg"),
+         marrangeGrob(grobs = plot_7[j:k], nrow=2, ncol=2))
+ j <- j + 4
+ k <- k + 4
+   } else {
+     ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster_", i, ".jpg"), 
+                  marrangeGrob(grobs = plot_7[j:length(TF_family)], nrow=2, ncol=2))
+ } 
+ }
+
+#####-----log
+ plot_8 <- lapply(TF_family, function(x)
+   Ara_TF_results_scan %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = log(score))) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(cluster), ncol = 5) 
+   ) 
+ 
+# dir.create("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster")
+
+j <- 1
+k <- 4
+ for (i in 1: (length(TF_family)/4)){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster/Ara_distance_to_TSS_vs_TF_binding_log_score_by_cluster_", i, ".jpg"),
+         marrangeGrob(grobs = plot_8[j:k], nrow=2, ncol=2))
+ j <- j + 4
+ k <- k + 4
+   } else {
+     ggsave(paste0("Plots/Arabidopsis/Ara_distance_to_TSS_vs_TF_binding_score_by_cluster/Ara_distance_to_TSS_vs_TF_binding_log_score_by_cluster_", i, ".jpg"), 
+                  marrangeGrob(grobs = plot_8[j:length(TF_family)], nrow=2, ncol=2))
+ } 
+ }
+TF_family
+```
+
+
+
+```{r}
+
+
+interesting_TF <- c("C2C2gata_tnt", "mTERF_tnt", "MYBrelated_tnt", "NLP_tnt", "HMG_tnt", "FAR1_tnt", "SRS_tnt")
+str_subset(TF_family, "C2C2gata_tnt")
+lapply(interesting_TF, function(x) str_subset(TF_family, x))
+
+TF_family %in% interesting_TF
+
+```
+
+
+```{r}
+interesting_TF <- c("C2C2gata_tnt", "mTERF_tnt", "MYBrelated_tnt", "NLP_tnt", "HMG_tnt", "FAR1_tnt", "SRS_tnt")
+ 
+plot_1_v1 <- lapply(interesting_TF, function(x)
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+   ) 
+ 
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_selected", ".jpg"), marrangeGrob(grobs = plot_1_v1, nrow=4, ncol=4))
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_selected_1", ".jpg"), marrangeGrob(grobs = plot_1_v1, nrow=4, ncol=2))
+
+ plot_6_v1 <- lapply(interesting_TF, function(x)
+   Ara_TF_results_scan %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+   ) 
+
+ ggsave(paste0("Plots/Ara_distance_to_TSS_vs_TF_binding_score_free_y_selected", ".jpg"), marrangeGrob(grobs = plot_6_v1, nrow=4, ncol=4))
+ ggsave(paste0("Plots/Ara_distance_to_TSS_vs_TF_binding_score_free_y_selected_1", ".jpg"), marrangeGrob(grobs = plot_6_v1, nrow=4, ncol=2))
+ 
+ 
+```
+
+```{r}
+plot_3_v1 <- lapply(interesting_TF, function(x)
+   Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none")  +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3)  + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines"))  
+   ) 
+
+ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolo_selected", ".jpg"),
+       marrangeGrob(grobs = plot_3_v1, nrow=4, ncol=2))
+
+
+
+
+```
+####--------Orthologs-------##########
+# Combine Brapa and Arabidopsis orthologs with annatated promoters
+## Plot scores vs distance faceted by "cluster" number from Arabidopsis expression data
+```{r}
+Brapa3_TF_results_orthologs <- Brapa3_TF_results_homoeolog %>% 
+   inner_join(., unique(select(Ara_TF_results_scan, gene_id, cluster)), by = c("AGI" = "gene_id"))
+
+Brapa3_TF_results_orthologs$gene_id
+length(unique(Brapa3_TF_results_orthologs$gene_id))
+length(unique(Brapa3_TF_results_homoeolog$gene_id))
+length(unique(Brapa3_TF_results_orthologs$AGI))
+length(unique(Brapa3_TF_results_homoeolog$AGI))
+# [1] 23022 # Brapa genes having orthologs with Arabidopsis (having annotated promoters)
+# [1] 33550
+# [1] 14356 #Arabidopsis genes having orthologs with Brapa
+# [1] 18075
+
+Ara_TF_results_orthologs <-
+  Ara_TF_results_scan %>% 
+   inner_join(., unique(select(Brapa3_TF_results_homoeolog, AGI)), by = c("gene_id" = "AGI"))
+length(unique(Ara_TF_results_orthologs$gene_id))
+# [1] 14356
+```
+## Plot Brassica orthologs
+```{r}
+ plot_9 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_orthologs %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(cluster), ncol = 5) 
+   ) 
+ 
+# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_cluster")
+
+j <- 1
+k <- 4
+ for (i in 1: (length(TF_family)/4)){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_cluster/Brapa_distance_to_TSS_vs_TF_binding_score_by_cluster_", i, ".jpg"),
+         marrangeGrob(grobs = plot_9[j:k], nrow=2, ncol=2))
+ j <- j + 4
+ k <- k + 4
+   } else {
+     ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_cluster/Brapa_distance_to_TSS_vs_TF_binding_score_by_cluster_", i, ".jpg"),
+                  marrangeGrob(grobs = plot_9[j:length(TF_family)], nrow=2, ncol=2))
+ } 
+ }
+
+plot_9[[1]]
+```
+
+## Plot Arabidopsis orthologs
+```{r}
+ plot_10 <- lapply(TF_family, function(x)
+   Ara_TF_results_orthologs %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(cluster), ncol = 5) 
+   ) 
+ 
+# dir.create("Plots/Arabidopsis/Ara_orthologs_distance_to_TSS_vs_TF_binding_score_by_cluster")
+
+j <- 1
+k <- 4
+ for (i in 1: (length(TF_family)/4)){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Arabidopsis/Ara_orthologs_distance_to_TSS_vs_TF_binding_score_by_cluster/Ara_ortholog_distance_to_TSS_vs_TF_binding_score_by_cluster_", i, ".jpg"),
+         marrangeGrob(grobs = plot_10[j:k], nrow=2, ncol=2))
+ j <- j + 4
+ k <- k + 4
+   } else {
+     ggsave(paste0("Plots/Arabidopsis/Ara_orthologs_distance_to_TSS_vs_TF_binding_score_by_cluster/Ara_ortholog_distance_to_TSS_vs_TF_binding_score_by_cluster_", i, ".jpg"),
+                  marrangeGrob(grobs = plot_10[j:length(TF_family)], nrow=2, ncol=2))
+ } 
+ }
+
+plot_10[[1]]
+```
+
+
+####--------#####
+
+# Spearman rank correlation
+```{r}
+ lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == x))
+  
+  
+  lapply(interesting_TF, function(x)
+   Ara_TF_results_scan %>% 
+  filter(TF_family == x)) 
+```
+
+
+
+```{r}
+# Brapa3_genomes <- select(Brapa3_genomes, -V1, -V3) %>% 
+#   rename("AGI" = V2, "Genome" = V4, "homolog_1" = V5, "homolog_2" = V6, "homolog_3" = V7)
+#        
+# VariableGene_Brapa_Ara_ortologs <- inner_join(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op[1:2], Brapa3_genomes, by = "AGI")
+# AllGenes_Brapa_Ara_orthologs <- filter(Brapa3_genomes, AGI != "-")
+# 
+# dim(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op)
+# dim(Brapa_Ara_ortologs)
+# dim(Brapa3_genomes)
+# dim(AllGenes_Brapa_Ara_orthologs)
+# # [1] 13732    87
+# # [1] 12569     6
+# # [1] 32749     5
+# # [1] 24730     5
+# 
+# # [1] 8019    Brassica genes don't have orthologs in Arabidopsis
+# 
+# # Check what clusters have been filtered out from ortholog data:
+# 
+# table(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op$cluster)
+# table(anti_join(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op[1:2], Brapa3_genomes, by = "AGI")$cluster)
+# round((table(anti_join(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op[1:2], Brapa3_genomes, by = "AGI")$cluster)/table(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op$cluster))*100)
+# #)
+```
+
+
+

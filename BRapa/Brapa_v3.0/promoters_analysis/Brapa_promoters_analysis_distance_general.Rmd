@@ -1,0 +1,910 @@
+---
+title: "Analysis of distribution of TF binding sites in Brapa promoters, automatization"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(gplots)
+
+library(randomForest)
+library(broom) # create dataframe from statistical tests outputs
+library(gridExtra) # to save ggplots on 1 page
+
+# library(plyr) # to round up to tearest 10; problem with some dplyr comands
+
+library(rtracklayer)
+library(Biostrings)
+library(GenomicRanges)
+
+# source("~/Work/2019/Analysis/Utilities_R/Functions/My_functions.R")
+
+set.seed(100)
+```
+
+```{r}
+load("data/data_to_load/Brapa_promoters_analysis_distance_short.RData")
+```
+
+```{r}
+head(Brapa3_TF_results_homoeolog)
+head(TF_family)
+list_TF_motif <- unique(Brapa3_TF_results_homoeolog$motif)
+
+```
+
+#####--General for all TFs-----##########
+# Calculate "Norm_factor_1", based on the number of promoters at particular distance/devided by total N of promoters in the data; This will be the same for all the TFs
+
+```{r}
+# TF_results = Brapa3_TF_results_homoeolog
+
+norm.factor_1.calc <- function(promoter_length, TF_results){
+  
+  n_col <- seq(0, promoter_length, by = 10)
+  
+  Norm_promoters <- TF_results %>% 
+  select(gene_id, promoter_width) %>% 
+  mutate(promoter_width = round(promoter_width, -1)) %>% 
+  unique() %>% group_by(promoter_width) %>% 
+  mutate(N = n()) %>% 
+  ungroup() %>% 
+  arrange(N) %>%
+  select(-gene_id) %>% unique() %>% 
+  right_join(., data.frame("promoter_width" = n_col), by = "promoter_width") %>% 
+  mutate_all(list(~replace(., is.na(.), 0)))
+  
+  list_promoters <- Norm_promoters$promoter_width
+  
+  Norm_promoters_factor1 <- Norm_promoters %>% 
+  mutate(Norm_factor_1 = unlist(lapply(list_promoters, function(x) filter(., promoter_width >= x ) %>%
+  summarise(sum(N))))/sum(N)) %>% 
+  arrange(desc(promoter_width)) %>% 
+  select(.,-N) 
+
+Norm_factor_1 <- Norm_promoters_factor1$Norm_factor_1
+
+return(Norm_factor_1)
+  
+}
+  
+
+Norm_factor_1 <- norm.factor_1.calc(1500, Brapa3_TF_results_homoeolog) 
+
+```
+
+
+#####--------Specific for each TF--------------##############
+
+
+
+# Function to calculate Expected_grid, Observed_grid and compare them to each other
+```{r}
+# TF_motif <- "ARF_tnt.ARF16_col_b_m1"
+# TF_results = Brapa3_TF_results_homoeolog
+# promoter_length <- 1500
+# Norm_factor_1 <- norm.factor_1.calc(1500, Brapa3_TF_results_homoeolog) 
+
+Observed.Expected.diff <- function(TF_results, TF_motif, promoter_length, Norm_factor_1){
+
+# Create *"Expected_grid"* (distribution of score.pct what will be the same at any distance, and will be equal to the total distribution of all TF binding sites)
+  
+## Calculte an average score.pct to fill into "Expected grid"
+score_pct_distribution <- TF_results %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total))
+
+## Create an Empty matrix for "Expected grid"
+n_rows <- min(round(score_pct_distribution$score.pct)):max(round(score_pct_distribution$score.pct))
+n_col <- seq(0, promoter_length, by = 10)
+
+Expected_grid_empty <-as.data.frame(matrix(, length(n_rows), length(n_col), dimnames=list(as.character(n_rows), as.character(n_col))))
+
+## Fill an empty "Expected grid" with scores.pct
+Expected_grid <- Expected_grid_empty %>% 
+  rownames_to_column(., var = "rowname") %>% 
+  mutate(.,rowname = as.numeric(rowname)) %>% 
+  left_join(., score_pct_distribution, by = c("rowname" = "score.pct")) %>% 
+  mutate_at(.vars = vars(-rowname, -N_total, -N_total_normal), .funs = list(~c(N_total_normal))) %>% 
+  mutate_at(vars(-rowname, -N_total, -N_total_normal), list(~replace(., is.na(.), 0))) %>% 
+  select(-N_total, -N_total_normal)
+  
+## Calculate "Norm_factor_2" for each TF to bring sum of values in Expected_grid to be 1
+Norm_factor_2 <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum()
+
+## normalise "Expected_grid" by "Norm_factor_1" and "Norm_factor_2"
+Expected_grid_norm <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate_all(list(~(. / Norm_factor_2))) %>% 
+  mutate(.,"rowname" = n_rows) %>% 
+  column_to_rownames(var="rowname")
+
+
+# Create *"Observed_grid"* (distribution of score.pct what were observed at any distance, for particular gene; nomalised by total Number of binding sites for this TF)
+ 
+## Calculate the number of TF_binding sites with particular score.pct at each distance
+Observed_grid <- TF_results %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+# Check that the sum of all expected values is equal to 1
+report_1 <- NULL
+report_2 <- NULL
+
+if(Expected_grid_norm %>% 
+  gather(key, Value) %>% 
+  select(Value) %>% sum() == 1) {
+  report_1 <- "Expected_grid_norm calculated"
+} else {
+report_1 <- "Error#1" 
+}
+
+# Check that the sum of all Observed values is equal to 1
+
+if(Observed_grid %>% 
+  gather(key, Value) %>% 
+  select(Value) %>% sum() == 1){
+  report_2 <-"Observed_grid calculated"
+} else {
+  report_2 <-"Error#2"
+}
+
+
+# Calculate MSE and RMSE between Observed and Expected:
+
+RMSE <- sqrt(
+            ((Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum())/
+              (length(n_rows)*length(n_col))
+            )
+
+#Calculate the Overlape between "Predicted" and "Observed" values, by choosing the "min" value from both and sum all of the values.
+## if sum is closed to 1, there is no difference between the distributions of probabilities for "Observed" and "Expected"
+
+Overlap_Observed_Expected <- Observed_grid %>% rownames_to_column("score.pct") %>% 
+  gather("distance_to_TSS", "Observed", -score.pct) %>% 
+  left_join(., 
+            (Expected_grid_norm %>% rownames_to_column("score.pct") %>% 
+              gather("distance_to_TSS", "Expected", -score.pct)),
+  by = c("score.pct", "distance_to_TSS")) %>% 
+  mutate(min_score = pmin(Observed, Expected )) %>%
+  summarise_at(vars(min_score), funs(sum))
+
+Output <- list("Observed_grid" = Observed_grid, "Expected_grid"=Expected_grid_norm,"RMSE"=RMSE, "Overlap_Observed_Expected" = pull(Overlap_Observed_Expected), Report = list(report_1, report_2))
+  return(Output)
+
+}
+
+```
+
+# Calculate RMSE and (Overlap_Observed_Expected for all TFs
+```{r}
+Overlap_Observed_Expected <- as.data.frame(sapply(list_TF_motif, 
+                               function(x){Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, 
+                                                                   TF_motif = x, promoter_length = 1500, 
+                                                                   Norm_factor_1 = Norm_factor_1)[3:4]},
+                                                                   simplify = FALSE, USE.NAMES = TRUE)) %>% 
+          gather("key", "Value") %>% 
+          mutate(motif = str_remove(key, ".RMSE|.Overlap_Observed_Expected"), 
+                 test = str_extract(key, "RMSE|Overlap_Observed_Expected")) %>% 
+          select(-key) %>% 
+          spread(test, Value)
+        
+
+Overlap_Observed_Expected[860:871, ]
+
+
+df_Observed_Expected <- sapply(list_TF_motif, function(x){as.data.frame(Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, TF_motif = x, promoter_length = 1500, Norm_factor_1 = Norm_factor_1)[1:2])}, simplify = FALSE, USE.NAMES = TRUE)
+
+
+df_Observed_Expected[1]
+
+Overlap_Observed_Expected %>% 
+  filter(motif == "C3H_tnt.TZF9_col_a_m1")
+
+
+```
+
+```{r}
+Overlap_Observed_Expected %>% 
+  arrange(Overlap_Observed_Expected)
+```
+
+```{r}
+df_1 <- df_Observed_Expected$HSF_tnt.HSFC1_colamp_a_m1
+
+heatmap(as.matrix(df_1[,1:151]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          #main="C3H_tnt.TZF9_col_a_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+#df_1 <- test_3[1]
+
+heatmap(as.matrix(df_1[,152:302]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          #main=names(df_1),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+```
+
+
+
+
+"C3H_tnt.TZF9_col_a_m1"
+"bHLH_tnt.bHLH64_col_a_m1"
+"ND_tnt.AT1G63040_col_a_m1"
+"MADS_tnt.FEM111_col_a_m1"
+
+
+# Plot the results: Overlap_Observed_Expected and RMSE
+```{r}
+p1 <- Overlap_Observed_Expected %>% 
+  ggplot(aes(x = Overlap_Observed_Expected)) +
+  geom_histogram()
+
+p2 <- Overlap_Observed_Expected %>% 
+  ggplot(aes(x = -log(RMSE))) +
+  geom_histogram(bins = 200)
+
+
+p3 <- Overlap_Observed_Expected %>% 
+  ggplot(aes(x = -log(RMSE), y = Overlap_Observed_Expected)) +
+  geom_point()
+
+p4 <- Overlap_Observed_Expected %>% 
+  ggplot(aes(x = RMSE, y = Overlap_Observed_Expected)) +
+  geom_point()
+
+p1
+p2
+p3
+p4
+
+ ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoters_analysis_distance_Overlap_Observed_Expected_vs_RMSE.jpeg", marrangeGrob(grobs = list(p1,p2,p3,p4), nrow=2, ncol=2))
+```
+
+
+
+```{r}
+"C3H_tnt.TZF9_col_a_m1"
+
+names(df_Observed_Expected)[1:2]
+df_Observed_Expected[1:2]
+
+df_Observed_Expected$C3H_tnt.TZF9_col_a_m1[,152:302]
+
+df_Observed_Expected$bHLH_tnt.bHLH64_col_a_m1
+
+df_Observed_Expected$ND_tnt.AT1G63040_col_a_m1
+
+df_Observed_Expected$MADS_tnt.FEM111_col_a_m1
+
+
+```
+
+
+
+```{r}
+Report <- as.data.frame(sapply(list_TF_motif, function(x){Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, TF_motif = x, promoter_length = 1500, Norm_factor_1 = Norm_factor_1)[5]}, simplify = TRUE, USE.NAMES = TRUE))
+colnames(Report)[1:2]
+
+Report_1 <- Report %>% 
+          gather("key", "Value") %>% 
+          mutate(motif = str_remove(key, ".Report..Expected_grid_norm.calculated.|.Report..Observed_grid.calculated.|Report..Error.1.|Report..Error.2."),
+                test = str_extract(key, "Expected_grid|Observed_grid|Error#1|Error#2")) %>% 
+          select(-key) %>% 
+          spread(test, Value) %>% 
+          select(-NA)
+
+Error#2
+
+Report_1$`<NA>`
+# 888, 73, 27, 811
+
+Report_1$key[1000:1100]
+Report_1[888,]
+
+TCP_tnt.TCP14_col_b_m1.Report..Error.1.
+
+str_subset(Report_1$key, "C3H_tnt.TZF9_col_a_m1")
+
+```
+
+
+
+# test on a few TF
+```{r}
+test_3 <- sapply(list_TF_motif[1:2], function(x){as.data.frame(Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, TF_motif = x, promoter_length = 1500, Norm_factor_1 = Norm_factor_1)[1:2])}, simplify = FALSE, USE.NAMES = TRUE)
+
+names(test_3)
+test_3[1]
+
+str_subset(list_TF_motif, "ARF_tnt")
+
+test_3 <- sapply(str_subset(list_TF_motif, "ARF_tnt"), function(x){as.data.frame(Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, TF_motif = x, promoter_length = 1500, Norm_factor_1 = Norm_factor_1)[1:2])}, simplify = FALSE, USE.NAMES = TRUE)
+
+names(test_3)
+test_3[1]
+
+
+```
+
+```{r}
+test_4 <- as.data.frame(sapply(list_TF_motif[1:2], 
+                               function(x){Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, 
+                                                                   TF_motif = x, promoter_length = 1500, 
+                                                                   Norm_factor_1 = Norm_factor_1)[3:4]},
+                                                                   simplify = FALSE, USE.NAMES = TRUE)) %>% 
+          gather("key", "Value") %>% 
+          mutate(motif = str_remove(key, ".RMSE|.Overlap_Observed_Expected"), 
+                 test = str_extract(key, "RMSE|Overlap_Observed_Expected")) %>% 
+          select(-key) %>% 
+          spread(test, Value)
+        
+
+test_4
+
+# [1] 0.0002855182
+# 0.5460993	
+
+str_subset(list_TF_motif, "ARF_tnt")
+
+test_4 <- as.data.frame(sapply(str_subset(list_TF_motif, "ARF_tnt"), 
+                               function(x){Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, 
+                                                                   TF_motif = x, promoter_length = 1500, 
+                                                                   Norm_factor_1 = Norm_factor_1)[3:4]},
+                                                                   simplify = FALSE, USE.NAMES = TRUE)) %>% 
+          gather("key", "Value") %>% 
+          mutate(motif = str_remove(key, ".RMSE|.Overlap_Observed_Expected"), 
+                 test = str_extract(key, "RMSE|Overlap_Observed_Expected")) %>% 
+          select(-key) %>% 
+          spread(test, Value)
+        
+
+test_4
+
+# ARF_tnt.ARF16_col_b_m1	0.1369796	5.654826e-04	
+# ARF_tnt.ARF2_col_v31_m1	0.8307025	8.515444e-05	
+```
+
+
+####-------------------------------####
+"df_Observed_Expected$C3H_tnt.TZF9_col_a_m1"
+
+```{r}
+df_1 <- df_Observed_Expected$ND_tnt.FRS9_colamp_a_m1
+
+heatmap(as.matrix(df_1[,1:151]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main="C3H_tnt.TZF9_col_a_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+#df_1 <- test_3[1]
+
+heatmap(as.matrix(df_1[,152:302]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_1),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+
+
+
+df_2 <- test_3[2]
+df_2[[1]]
+heatmap(as.matrix(df_2[[1]][,1:151]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_2),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+heatmap(as.matrix(df_2[[1]][,152:302]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_2),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+```
+####---------------------------------####
+
+
+```{r}
+df_1 <- test_3[1]
+
+heatmap(as.matrix(df_1[[1]][,1:151]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_1),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+df_1 <- test_3[1]
+
+heatmap(as.matrix(df_1[[1]][,152:302]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_1),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+
+
+
+df_2 <- test_3[2]
+df_2[[1]]
+heatmap(as.matrix(df_2[[1]][,1:151]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_2),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+heatmap(as.matrix(df_2[[1]][,152:302]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          main=names(df_2),
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+```
+
+
+####----------test WHY there is an error#2 in a few TF, EX #865 (list_TF_motif[865])
+```{r}
+
+test <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == list_TF_motif[868]) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct)) 
+
+
+
+test %>% 
+  ggplot() +
+  geom_col(aes(x = score.pct, y = N_total_normal), fill = "blue") +
+  labs(title = "G2like_tnt.AT2G20400_col_a_m1")
+
+
+```
+
+# filter out all the TF with all the binding sites having the same score, when rounded
+"C3H_tnt.TZF9_col_a_m1"
+"bHLH_tnt.bHLH64_col_a_m1"
+"ND_tnt.AT1G63040_col_a_m1"
+"MADS_tnt.FEM111_col_a_m1"
+
+```{r}
+test <- 
+  Brapa3_TF_results_homoeolog %>% 
+  filter(motif == list_TF_motif[1]) %>% 
+  select(score.pct) %>%
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  mutate(motif = list_TF_motif[1]) 
+  
+
+ Brapa3_TF_results_homoeolog %>% 
+  filter(motif == "C3H_tnt.TZF9_col_a_m1") %>% 
+  select(score.pct) %>%  unique()
+
+ 
+score_pct_distribution <- lapply(list_TF_motif[1:4], function(x){
+  Brapa3_TF_results_homoeolog %>% 
+  filter(motif == x) %>% 
+  select(score.pct) %>%
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  mutate(motif = x)
+ })
+
+dplyr::bind_rows(score_pct_distribution)
+
+```
+
+
+
+
+# *ARF_tnt.ARF16_col_b_m1* 
+# Create *"Expected_grid"* (distribution of score.pct what will be the same at any distance, and will be equal to the total distribution of all TF binding sites)
+## Calculate the number of TF_binding sites with particular score.pct at all the distanses from TSS
+```{r}
+TF_motif <- "HB_tnt.ATHB21_col_a_m1"
+
+score_pct_distribution <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct))
+  
+```
+
+  
+## Empty matrix for "Expected grid"
+```{r}
+n_rows <- min(round(score_pct_distribution$score.pct)):max(round(score_pct_distribution$score.pct))
+n_col <- seq(0, 1500, by = 10)
+
+Expected_grid_empty <-as.data.frame(matrix(, length(n_rows), length(n_col), dimnames=list(as.character(n_rows), as.character(n_col))))
+
+```
+
+
+## Fill "Expected grid" with scores.pct
+```{r}
+Expected_grid <- Expected_grid_empty %>% 
+  rownames_to_column(., var = "rowname") %>% 
+  mutate(.,rowname = as.numeric(rowname)) %>% 
+  left_join(., score_pct_distribution, by = c("rowname" = "score.pct")) %>% 
+  mutate_at(.vars = vars(-rowname, -N_total, -N_total_normal), .funs = list(~c(N_total_normal))) %>% 
+  mutate_at(vars(-rowname, -N_total, -N_total_normal), list(~replace(., is.na(.), 0))) %>% 
+  select(-N_total, -N_total_normal)
+  
+```
+
+
+# Calculate "Norm_factor_2" for each TF to bring sum of values in Expected_grid to be 1
+```{r}
+Norm_factor_2 <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum()
+
+```
+
+
+## normalise "Expected_grid" by "Norm_factor_1" and "Norm_factor_2"
+```{r}
+Expected_grid_norm <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+   mutate_all(funs((. / Norm_factor_2))) %>%
+  mutate(.,"rowname" = n_rows) %>% 
+  column_to_rownames(var="rowname")
+  
+# Check that the sum of all expected values is equal to 1
+Expected_grid_norm %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+
+Expected_grid_norm %>% 
+  gather(key, Value) %>% select(Value) %>% sum() == 1
+```
+
+
+
+# Create *"Observed_grid"* (distribution of score.pct what were observed at any distance, for particular gene; nomalised by total Number of binding sites for this TF)
+ 
+## Calculate the number of TF_binding sites with particular score.pct
+
+```{r}
+Observed_grid <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  arrange(desc(score.pct)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+Observed_grid %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+
+Observed_grid %>% 
+  gather(key, Value) %>% 
+  select(Value) %>% sum() == 1
+
+x <- Observed_grid %>% 
+  gather(key, Value) %>% select(Value)
+
+sum(x) == 1
+
+```
+
+```{r}
+Observed_grid <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  arrange(desc(score.pct)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct") 
+
+
+y <- Observed_grid %>% 
+  gather(key, Value) 
+  
+sum(y$Value) == 1  
+  
+y_1 <-  Observed_grid %>% 
+  mutate(sum = rowsum(.)) %>% 
+  select(.,sum) 
+sum(y_1$Value) == 1   
+ 
+ 
+ %>% sum(.) %>% round(.,15) == 1
+
+
+
+
+%>% #
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct") %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() ==1
+  
+  
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+x<- Observed_grid %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+x < 1
+
+1 - x
+
+#[1] 1.110223e-16
+
+y <-  Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  arrange(desc(score.pct)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>%
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  
+  
+  
+  select(-score.pct) %>%  mutate(sum = rowSums(., na.rm = TRUE)) %>% 
+select(.,sum) %>% sum() == 1
+
+
+
+sum(y$N_sd_norm, na.rm = TRUE) == 1
+
+data.frame("distance_to_TSS" = n_col)
+#, "score.pct" = n_rows)
+ mutate(sum = rowSums(., na.rm = TRUE)) %>% 
+select(.,sum) %>% sum() == 1
+
+
+ 
+```
+
+
+# Calculate MSE and RMSE between Observed and Expected:
+```{r}
+MSE <- (Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum()
+RMSE <- sqrt(
+            ((Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum())/
+              (length(n_rows)*length(n_col))
+            )
+
+MSE
+RMSE
+
+# [1] 0.0019797
+# [1] 0.0005654826
+
+```
+
+#Calculate the Overlape between "Predicted" and "Observed" values, by choosing the "min" value from both and sum all of the values.
+## if sum is closed to 1, there is no difference between the distributions of probabilities for "Observed" and "Expected"
+
+```{r}
+Overlap_Observed_Expected <- Observed_grid %>% rownames_to_column("score.pct") %>% 
+  gather("distance_to_TSS", "Observed", -score.pct) %>% 
+  left_join(., 
+            (Expected_grid_norm %>% rownames_to_column("score.pct") %>% 
+              gather("distance_to_TSS", "Expected", -score.pct)),
+  by = c("score.pct", "distance_to_TSS")) %>% 
+  mutate(min_score = pmin(Observed, Expected )) %>%
+  summarise_at(vars(min_score), funs(sum))
+
+Overlap_Observed_Expected
+# 0.1369796
+```
+
+
+### Plot heatmaps
+```{r}
+# pdf("Plots/Brapa_promoters_analysis_distance/ARF_tnt.ARF16_col_b_m1_scores_pct_vs_distance_scaled.pdf")
+# par(cex.main=1)
+# p1 <- 
+heatmap(as.matrix(Expected_grid_norm),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Expected_ARF_tnt.ARF16_col_b_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# p2 <- 
+heatmap(as.matrix(Observed_grid),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,0.005,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Observed_ARF_tnt.ARF16_col_b_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# dev.off()
+# 
+# 
+# p1
+# p2
+# 
+# rm(p1, p2)
+```
+
+
+
+
+
+
+
+
+
+]

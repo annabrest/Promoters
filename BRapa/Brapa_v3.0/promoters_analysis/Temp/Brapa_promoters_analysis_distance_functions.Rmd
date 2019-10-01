@@ -1,0 +1,785 @@
+---
+title: "Analysis of distribution of TF binding sites in Brapa promoters; automatization; investigation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(gplots)
+
+library(randomForest)
+library(broom) # create dataframe from statistical tests outputs
+library(gridExtra) # to save ggplots on 1 page
+
+# library(plyr) # to round up to tearest 10; problem with some dplyr comands
+
+library(rtracklayer)
+library(Biostrings)
+library(GenomicRanges)
+
+# source("~/Work/2019/Analysis/Utilities_R/Functions/My_functions.R")
+
+set.seed(100)
+```
+
+```{r}
+load("data/data_to_load/Brapa_promoters_analysis_distance_short.RData")
+```
+
+```{r}
+head(Brapa3_TF_results_homoeolog)
+head(TF_family)
+list_TF_motif <- unique(Brapa3_TF_results_homoeolog$motif)
+
+```
+
+#####--General for all TFs-----##########
+# Calculate "Norm_factor_1", based on the number of promoters at particular distance/devided by total N of promoters in the data; This will be the same for all the TFs
+
+```{r}
+# TF_results = Brapa3_TF_results_homoeolog
+
+norm.factor_1.calc <- function(promoter_length, TF_results){
+  
+  n_col <- seq(0, promoter_length, by = 10)
+  
+  Norm_promoters <- TF_results %>% 
+  select(gene_id, promoter_width) %>% 
+  mutate(promoter_width = round(promoter_width, -1)) %>% 
+  unique() %>% group_by(promoter_width) %>% 
+  mutate(N = n()) %>% 
+  ungroup() %>% 
+  arrange(N) %>%
+  select(-gene_id) %>% unique() %>% 
+  right_join(., data.frame("promoter_width" = n_col), by = "promoter_width") %>% 
+  mutate_all(list(~replace(., is.na(.), 0)))
+  
+  list_promoters <- Norm_promoters$promoter_width
+  
+  Norm_promoters_factor1 <- Norm_promoters %>% 
+  mutate(Norm_factor_1 = unlist(lapply(list_promoters, function(x) filter(., promoter_width >= x ) %>%
+  summarise(sum(N))))/sum(N)) %>% 
+  arrange(desc(promoter_width)) %>% 
+  select(.,-N) 
+
+Norm_factor_1 <- Norm_promoters_factor1$Norm_factor_1
+
+return(Norm_factor_1)
+  
+}
+  
+
+Norm_factor_1 <- norm.factor_1.calc(1500, Brapa3_TF_results_homoeolog) 
+
+```
+
+
+#####--------Specific for each TF--------------##############
+
+
+
+# Function to calculate Expected_grid, Observed_grid and compare them to each other
+```{r}
+
+Observed.Expected.diff <- function(TF_results, TF_motif, promoter_length, Norm_factor_1, n = 10){
+
+# TF_motif <- name/list of TFs
+# TF_results = file containing results from TF binding sites prediction (Brapa3_TF_results_homoeolog)
+# promoter_length <- 1500 bp
+# Norm_factor_1 <- results from function: norm.factor_1.calc(1500, Brapa3_TF_results_homoeolog) 
+# n is lenght of bin in distance
+
+# Create *"Expected_grid"* (distribution of score.pct what will be the same at any distance, and will be equal to the total distribution of all TF binding sites)
+  
+## Calculte an average score.pct to fill into "Expected grid"
+score_pct_distribution <- TF_results %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total))
+
+## Create an Empty matrix for "Expected grid"
+n_rows <- 60:100
+n_col <- seq(0, promoter_length, by = n) # 
+
+Expected_grid_empty <-as.data.frame(matrix(, length(n_rows), length(n_col), dimnames=list(as.character(n_rows), as.character(n_col))))
+
+## Fill an empty "Expected grid" with scores.pct
+Expected_grid <- Expected_grid_empty %>% 
+  rownames_to_column(., var = "rowname") %>% 
+  mutate(.,rowname = as.numeric(rowname)) %>% 
+  left_join(., score_pct_distribution, by = c("rowname" = "score.pct")) %>% 
+  mutate_at(.vars = vars(-rowname, -N_total, -N_total_normal), .funs = list(~c(N_total_normal))) %>% 
+  mutate_at(vars(-rowname, -N_total, -N_total_normal), list(~replace(., is.na(.), 0))) %>% 
+  select(-N_total, -N_total_normal)
+  
+## Calculate "Norm_factor_2" for each TF to bring sum of values in Expected_grid to be 1
+Norm_factor_2 <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum()
+
+## normalise "Expected_grid" by "Norm_factor_1" and "Norm_factor_2"
+Expected_grid_norm <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate_all(list(~(. / Norm_factor_2))) %>% 
+  mutate(.,"rowname" = n_rows) %>% 
+  column_to_rownames(var="rowname")
+
+
+# Create *"Observed_grid"* (distribution of score.pct what were observed at any distance, for particular gene; nomalised by total Number of binding sites for this TF)
+ 
+## Calculate the number of TF_binding sites with particular score.pct at each distance
+Observed_grid <- TF_results %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS/n)*n) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+# Check that the sum of all expected values is equal to 1
+report_1 <- NULL
+report_2 <- NULL
+
+if(Expected_grid_norm %>% 
+  gather(key, Value) %>% 
+  select(Value) %>% sum() == 1) {
+  report_1 <- "Expected_grid_norm calculated"
+} else {
+report_1 <- "Error#1" 
+}
+
+# Check that the sum of all Observed values is equal to 1
+
+if(Observed_grid %>% 
+  gather(key, Value) %>% 
+  select(Value) %>% sum() == 1){
+  report_2 <-"Observed_grid calculated"
+} else {
+  report_2 <-"Error#2"
+}
+
+
+# Calculate MSE and RMSE between Observed and Expected:
+
+RMSE <- sqrt(
+            ((Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum())/
+              (length(n_rows)*length(n_col))
+            )
+
+#Calculate the Overlape between "Predicted" and "Observed" values, by choosing the "min" value from both and sum all of the values.
+## if sum is closed to 1, there is no difference between the distributions of probabilities for "Observed" and "Expected"
+
+Overlap_Observed_Expected <- Observed_grid %>% rownames_to_column("score.pct") %>% 
+  gather("distance_to_TSS", "Observed", -score.pct) %>% 
+  left_join(., 
+            (Expected_grid_norm %>% rownames_to_column("score.pct") %>% 
+              gather("distance_to_TSS", "Expected", -score.pct)),
+  by = c("score.pct", "distance_to_TSS")) %>% 
+  mutate(min_score = pmin(Observed, Expected )) %>%
+  summarise_at(vars(min_score), funs(sum))
+
+Output <- list("Observed_grid" = Observed_grid, "Expected_grid"=Expected_grid_norm,"RMSE"=RMSE, "Overlap_Observed_Expected" = pull(Overlap_Observed_Expected), Report = list(report_1, report_2))
+  return(Output)
+
+}
+
+```
+
+
+# Calculate RMSE and (Overlap_Observed_Expected for all TFs
+```{r}
+Overlap_Observed_Expected <- as.data.frame(sapply(list_TF_motif, 
+                               function(x){Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, 
+                                                                   TF_motif = x, promoter_length = 1500, 
+                                                                   Norm_factor_1 = Norm_factor_1, n = 10)[3:4]},
+                                                                   simplify = FALSE, USE.NAMES = TRUE)) %>% 
+          gather("key", "Value") %>% 
+          mutate(motif = str_remove(key, ".RMSE|.Overlap_Observed_Expected"), 
+                 test = str_extract(key, "RMSE|Overlap_Observed_Expected")) %>% 
+          select(-key) %>% 
+          spread(test, Value)
+        
+
+Overlap_Observed_Expected[860:871, ]
+
+
+df_Observed_Expected <- sapply(list_TF_motif, function(x){as.data.frame(Observed.Expected.diff( TF_results = Brapa3_TF_results_homoeolog, TF_motif = x, promoter_length = 1500, Norm_factor_1 = Norm_factor_1, n = 10)[1:2])}, simplify = FALSE, USE.NAMES = TRUE)
+
+
+df_Observed_Expected[1]
+
+Overlap_Observed_Expected %>% 
+  filter(motif == "C3H_tnt.TZF9_col_a_m1")
+
+# 0.9243465	0.0002160693	
+```
+
+
+
+
+
+```{r}
+head(Brapa3_TF_results_homoeolog)
+min(Brapa3_TF_results_homoeolog$score.pct)
+```
+
+```{r}
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif) %>% summarise("N_bs_TF" = n()) %>%  # "bs" for binding sites
+#   full_join(.,
+# Brapa3_TF_results_homoeolog %>% 
+#   select(motif, gene_id) %>% 
+#   unique() %>% 
+#   group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+#   by = "motif") 
+# 
+# 
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif) %>% summarise("tot_N_bs_TF" = n()) 
+# 
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif) %>% mutate("tot_N_bs_TF" = n()) %>% 
+#   select(motif, N_bs_TF, gene_id) %>% 
+#   arrange(gene_id) %>% unique()
+# 
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif) %>% mutate("tot_N_bs_TF" = n()) %>% 
+#   select(motif, N_bs_TF, gene_id) %>% 
+#   arrange(motif) %>% unique()
+# 
+# 
+# 
+# ######
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif) %>% mutate("tot_N_bs_TF" = n()) %>% 
+#   group_by(motif, gene_id) %>% 
+#   mutate("N_bs_TF_promoter" = n(), "mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) %>% 
+#   ungroup() %>% 
+#   select(motif, gene_id, tot_N_bs_TF, N_bs_TF_promoter, mean_bs_TF_promoter) %>% 
+#   arrange(motif) %>% unique()
+#  
+# 
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif, gene_id) %>% 
+#   summarise(mean(n()))
+# 
+# # mean number of bs_TF on promoter
+# Brapa3_TF_results_homoeolog %>% 
+#   group_by(motif, gene_id) %>% 
+#   summarise(N = n()) %>% 
+#   group_by(motif) %>% 
+#   summarise(mean(N))
+
+
+
+
+
+```
+
+```{r}
+####--------#####
+calculus_Brapa3_TF_results_homoeolog <- Brapa3_TF_results_homoeolog %>% 
+  group_by(motif, gene_id) %>% 
+  mutate("N_bs_TF_promoter" = n()) %>%  # "N_bs_TF_promoter" for number of binding sites TF is bound on each promoters
+  group_by(motif) %>% 
+  mutate("mean_bs_TF_promoter" = mean(N_bs_TF_promoter)) %>%  # "mean_bs_TF_promoter" for mean number of promoters each TF is bound
+  group_by(motif) %>% mutate("tot_N_bs_TF" = n()) %>% # total number of "bs" (for binding sites) for each TF
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ungroup()
+
+
+# calculus_Brapa3_TF_results_homoeolog %>% 
+#   ggplot() +
+#   geom_point(aes(x = log10(N_promoters_TF), y = tot_N_bs_TF)) +
+#   geom_vline(xintercept = 3)
+
+# 1.
+# Plot total N of bs of TF vs N of promoters it bounds
+calculus_Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id, N_promoters_TF, tot_N_bs_TF) %>% 
+  unique() %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = tot_N_bs_TF)) +
+  geom_vline(xintercept = 3)
+
+# 2.
+# Plot mean N of bs of TF per promoter vs N of promoters it bounds
+calculus_Brapa3_TF_results_homoeolog %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = mean_bs_TF_promoter))
+
+calculus_Brapa3_TF_results_homoeolog %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = log(mean_bs_TF_promoter)))
+
+# 3.
+# Plot score.pct vs N of promoters:
+calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = N_promoters_TF, y = score.pct))
+
+# 4.
+# Plot promoter_widt vs N of promoters:
+calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = N_promoters_TF, y = promoter_width), alpha = 0.2, color = "blue")
+
+calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = as.numeric(N_promoters_TF), y = promoter_width), alpha = 0.2, color = "blue")
+
+# 5
+# Plot score.pct vs size of binding size:
+calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = (stop - start), y = score.pct), alpha = 0.2) +
+  labs(
+    x = "Height (cm)",
+    y = "Weight (kg)"
+  )
+
+calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor((stop - start)), y = score.pct))
+
+
+
+
+
+
+
+# Plot (observed-expected) vs size of binding size:
+
+calculus_Brapa3_TF_results_homoeolog %>% 
+  full_join(Overlap_Observed_Expected, by = "motif") %>% 
+  select(motif, Overlap_Observed_Expected, start, stop) %>% 
+  unique() %>% 
+   ggplot() +
+  geom_point(aes(x = (stop - start), y = Overlap_Observed_Expected), alpha = 0.2)
+
+
+calculus_Brapa3_TF_results_homoeolog %>% 
+  full_join(Overlap_Observed_Expected, by = "motif") %>% 
+  select(motif, Overlap_Observed_Expected, start, stop) %>% 
+  unique() %>% 
+   ggplot() +
+  geom_boxplot(aes(x = as.factor((stop - start)), y = Overlap_Observed_Expected), alpha = 0.2)
+
+
+calculus_Brapa3_TF_results_homoeolog %>% 
+  full_join(Overlap_Observed_Expected, by = "motif") %>% 
+  select(motif, RMSE, start, stop) %>% 
+  unique() %>% 
+   ggplot() +
+  geom_boxplot(aes(x = as.factor((stop - start)), y = RMSE), alpha = 0.2)
+
+Overlap_Observed_Expected %>% 
+  arrange(desc(RMSE))
+
+calculus_Brapa3_TF_results_homoeolog %>% 
+  filter(motif == "ND_tnt.FRS9_colamp_a_m1")
+
+
+```
+
+
+```{r}
+calculus_Brapa3_TF_results_homoeolog %>% 
+arrange(desc(mean_bs_TF_promoter), desc(N_bs_TF_promoter))  
+```
+
+# 1.
+# Plot total N of bs of TF vs N of promoters it bounds
+```{r}
+p1 <- 
+  calculus_Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id, N_promoters_TF, tot_N_bs_TF) %>% 
+  unique() %>% 
+  ggplot(aes(x = log10(N_promoters_TF), y = tot_N_bs_TF)) +
+  geom_point(colour = "blue", alpha = 0.02) +
+  geom_vline(xintercept = 3)
+p1
+ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoters_analysis_distance_tot_N_bs_TF_vs_N_promoters_TF.jpeg", p1,
+        width = 10, height = 10, units = "cm")
+  
+rm(p1)
+```
+
+# 2.
+# Plot mean N of bs of TF per promoter vs N of promoters it bounds
+
+```{r}
+
+# p1 <- 
+  calculus_Brapa3_TF_results_homoeolog %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = mean_bs_TF_promoter))
+
+# p2 <-
+  calculus_Brapa3_TF_results_homoeolog %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = log10(mean_bs_TF_promoter)))
+p1
+p2
+ # ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoters_analysis_distance_mean_bs_TF_promoter_vs_N_promoters_TF.jpeg", marrangeGrob(grobs = list(p1,p2), nrow=2, ncol=1))
+ ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoters_analysis_distance_mean_bs_TF_promoter_vs_N_promoters_TF_v1.jpeg",
+        width = 20, height = 10,units = "cm", marrangeGrob(grobs = list(p1,p2), nrow=1, ncol=2))
+rm(p1, p2)
+```
+
+# 3.
+# Plot score.pct vs N of promoters:
+
+```{r}
+
+p1 <- calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = N_promoters_TF, y = score.pct), color = "blue", alpha = 0.01)
+
+ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoters_analysis_distance_score_pc_N_promoters_TF.jpeg",
+        width = 15, height = 10,units = "cm")
+rm(p1)
+
+```
+
+# 4.
+# Plot promoter_widt vs N of promoters TF bound/ mean_bs_TF_promoter (mean number of binding sites TF bound on each promoter)/ tot_N_bs_TF (total N of TF's binding sites):
+```{r}
+p1 <-
+  calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = N_promoters_TF, y = promoter_width), alpha = 0.2, color = "blue")
+
+p2 <-
+  calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = log10(mean_bs_TF_promoter), y = promoter_width), alpha = 0.2, color = "blue")
+
+p3 <-
+  calculus_Brapa3_TF_results_homoeolog %>%
+  ggplot() +
+  geom_point(aes(x = log10(tot_N_bs_TF), y = promoter_width), alpha = 0.2, color = "blue")
+
+ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoters_analysis_distance_promoter_width.jpeg",
+        width = 10, height = 30,units = "cm", marrangeGrob(grobs = list(p1, p2, p3), nrow=3, ncol=1))
+
+rm(p1, p2, p3)
+```
+
+
+
+
+# Plot distribution of "number of promoters to which each TF is bound" vs "N of binding sites of TFs"
+
+```{r}
+Brapa3_TF_results_homoeolog %>% 
+  group_by(motif) %>% summarise("N_bs_TF" = n()) %>%  # "bs" for binding sites
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = N_bs_TF)) +
+  geom_vline(xintercept = 3)
+
+
+
+Brapa3_TF_results_homoeolog %>% 
+  group_by(motif) %>% summarise("N_bs_TF" = n()) %>%  # "bs" for binding sites
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ggplot() +
+  geom_point(aes(x = log10(N_promoters_TF), y = log10(N_bs_TF))) +
+  geom_vline(xintercept = 3)
+
+Brapa3_TF_results_homoeolog %>% 
+  group_by(motif) %>% summarise("N_bs_TF" = n()) %>%  # "bs" for binding sites
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ggplot() +
+  geom_point(aes(x = N_promoters_TF, y = N_bs_TF)) 
+
+
+```
+
+# Plot distribution of "number of promoters to which each TF is bound" vs "score.pct"
+
+```{r}
+Brapa3_TF_results_homoeolog %>% 
+  group_by(motif) %>% summarise("N_bs_TF" = n()) %>%  # "bs" for binding sites
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ggplot(aes(x = log(N_promoters_TF), y = N_bs_TF)) +
+  geom_point()
+
+
+
+Brapa3_TF_results_homoeolog %>% 
+  group_by(motif) %>% summarise("N_bs_TF" = n()) %>%  # "bs" for binding sites
+  full_join(.,
+Brapa3_TF_results_homoeolog %>% 
+  select(motif, gene_id) %>% 
+  unique() %>% 
+  group_by(motif) %>% summarise("N_promoters_TF" = n()), # "N_promoters_TFs" for number of promoters each TF is bound
+  by = "motif") %>% 
+  ggplot() +
+  geom_point(aes(x = log(N_promoters_TF), y = log(N_bs_TF))) +
+  geom
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+##################################################
+######---------------------------------------######
+## Calculate the number of TF_binding sites with particular score.pct at all the distanses from TSS
+# list_TF_motif[868]
+```{r}
+TF_motif <- list_TF_motif[868]
+
+score_pct_distribution <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct))
+  
+```
+
+  
+## Empty matrix for "Expected grid"
+```{r}
+n_rows <- 60:100
+n_col <- seq(0, 1500, by = 10)
+
+Expected_grid_empty <-as.data.frame(matrix(, length(n_rows), length(n_col), dimnames=list(as.character(n_rows), as.character(n_col))))
+
+```
+
+
+## Fill "Expected grid" with scores.pct
+```{r}
+Expected_grid <- Expected_grid_empty %>% 
+  rownames_to_column(., var = "rowname") %>% 
+  mutate(.,rowname = as.numeric(rowname)) %>% 
+  left_join(., score_pct_distribution, by = c("rowname" = "score.pct")) %>% 
+  mutate_at(.vars = vars(-rowname, -N_total, -N_total_normal), .funs = list(~c(N_total_normal))) %>% 
+  mutate_at(vars(-rowname, -N_total, -N_total_normal), list(~replace(., is.na(.), 0))) %>% 
+  select(-N_total, -N_total_normal)
+  
+```
+
+
+# Calculate "Norm_factor_2" for each TF to bring the sum of values in Expected_grid to be 1
+```{r}
+Norm_factor_2 <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum()
+
+as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  gather(Key, Value) %>% 
+  select(Value) %>% sum()
+```
+
+
+## normalise "Expected_grid" by "Norm_factor_1" and "Norm_factor_2"
+```{r}
+Expected_grid_norm <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+   mutate_all(funs((. / Norm_factor_2))) %>%
+  mutate(.,"rowname" = n_rows) %>% 
+  column_to_rownames(var="rowname")
+  
+# Check that the sum of all expected values is equal to 1
+Expected_grid_norm %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+
+Expected_grid_norm %>% 
+gather(Key, Value) %>% 
+  select(Value) %>% sum() == 1
+```
+
+
+
+# Create *"Observed_grid"* (distribution of score.pct what were observed at any distance, for particular gene; nomalised by total Number of binding sites for this TF)
+ 
+## Calculate the number of TF_binding sites with particular score.pct
+```{r}
+Observed_grid <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  arrange(desc(score.pct)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+
+
+Observed_grid %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+
+Observed_grid %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() - 1
+
+Observed_grid %>% 
+gather(Key, Value) %>% 
+  select(Value) %>% sum() == 1
+```
+
+
+# Calculate MSE and RMSE between Observed and Expected:
+```{r}
+MSE <- (Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum()
+
+RMSE <- sqrt(
+            ((Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum())/
+              (length(n_rows)*length(n_col))
+            )
+
+
+MSE
+RMSE
+
+# [1] 0.0002890327
+# [1] 0.0002160693
+
+# 0.001383519 - from privious run
+```
+
+#Calculate the Overlape between "Predicted" and "Observed" values, by choosing the "min" value from both and sum all of the values.
+## if sum is closed to 1, there is no difference between the distributions of probabilities for "Observed" and "Expected"
+
+```{r}
+Overlap_Observed_Expected <- Observed_grid %>% rownames_to_column("score.pct") %>% 
+  gather("distance_to_TSS", "Observed", -score.pct) %>% 
+  left_join(., 
+            (Expected_grid_norm %>% rownames_to_column("score.pct") %>% 
+              gather("distance_to_TSS", "Expected", -score.pct)),
+  by = c("score.pct", "distance_to_TSS")) %>% 
+  mutate(min_score = pmin(Observed, Expected )) %>%
+  summarise_at(vars(min_score), funs(sum))
+
+Overlap_Observed_Expected
+# 0.9243465
+```
+
+
+
+ND_tnt.FRS9_colamp_a_m1
+
+```{r}
+df_1 <- df_Observed_Expected$ND_tnt.FRS9_colamp_a_m1
+
+heatmap(as.matrix(df_1[,1:151]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          #main="C3H_tnt.TZF9_col_a_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+df_1 <- df_Observed_Expected$ND_tnt.FRS9_colamp_a_m1
+
+heatmap(as.matrix(df_1[,152:302]),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          labCol=NA,
+                          #main="C3H_tnt.TZF9_col_a_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+#df_1 <- test_3[1]
+
+
+
+
+
+
+```
+
+
+```{r}
+rm(TF_motif, score_pct_distribution, n_rows, n_col, Expected_grid, Expected_grid_empty, Expected_grid_norm, Observed_grid, list_promoters, Norm_factor_2, MSE, RMSE, Overlap_Observed_Expected)
+```
+
+
+
+

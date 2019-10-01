@@ -1,0 +1,648 @@
+---
+title: "Analysis of distribution of TF binding sites in Brapa promoters, ARF_tnt family"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(gplots)
+
+library(randomForest)
+library(broom) # create dataframe from statistical tests outputs
+library(gridExtra) # to save ggplots on 1 page
+
+# library(plyr) # to round up to tearest 10; problem with some dplyr comands
+
+library(rtracklayer)
+library(Biostrings)
+library(GenomicRanges)
+
+source("~/Work/2019/Analysis/Utilities_R/Functions/My_functions.R")
+
+set.seed(100)
+```
+
+```{r}
+load("data/data_to_load/Brapa_promoters_analysis_distance_short.RData")
+```
+
+```{r}
+head(Brapa3_TF_results_homoeolog)
+head(TF_family)
+
+```
+
+# Plot distribution of max.scores of TF within the family
+```{r eval=FALSE}
+plot_1 <-lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = motif, y = max.score)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0, 70)) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none")
+   ) 
+
+
+j <- 1
+k <- 16
+ for (i in 1:4){
+   if (k < length(TF_family)){
+  ggsave(paste0("Plots/Brapa_promoters_analysis_distance/Brapa_distance_to_TSS_vs_TF_maxscore_by_families", i, ".jpg"), 
+         marrangeGrob(grobs = plot_1[j:k], nrow=4, ncol=4))
+ j <- j+16
+ k <- k + 16
+   } else {ggsave(paste0("Plots/Brapa_promoters_analysis_distance/Brapa_distance_to_TSS_vs_TF_maxscore_by_families", i, ".jpg"), 
+                  marrangeGrob(grobs = plot_1[j:length(TF_family)], nrow=4, ncol=4))
+ } 
+}
+
+
+rm("j", "k", "i")
+
+# rm(list = c(str_subset(ls(), "test|plot|^p|bins|breaks|AGI"), str_subset(ls(), "\\bi\\b|\\bj\\b|\\bk\\b|\\bm\\b|\\bn\\b|\\bx\\b")))
+
+
+```
+
+
+# 1. Calculate distribution of scores for each TF
+score.pct - percentage of the score from max.score; rounded to the nearest 10th
+distance_to_TSS - rounded to the nearest 10th
+# Create an "Expected grid" for flat distribution of scores.pct with the distance (equal distribution of score.pct at any distance); the scores will be the same as general score for the certain TF.
+
+## Start from "ARF_tnt" family as example:
+### Check distribution of all score.pct for "ARF_tnt.ARF2_col_v31_m1" and "ARF_tnt.ARF16_col_b_m1"; plot 
+```{r}
+TF_list <- unique(Brapa3_TF_results_homoeolog$motif)
+
+str_subset(TF_family, "ARF_tnt")
+str_subset(TF_list, "ARF_tnt")
+# [1] "ARF_tnt.ARF2_col_v31_m1" "ARF_tnt.ARF16_col_b_m1"  # TF (ARF16_col_b_m1) accumulates at the end of the gene
+
+
+# ARF_tnt.ARF16_col_b_m1  
+test <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == "ARF_tnt.ARF16_col_b_m1") %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct)) 
+
+ # ARF_tnt.ARF2_col_v31_m11  
+test_1 <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == "ARF_tnt.ARF2_col_v31_m1") %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct)) 
+ 
+
+test %>% 
+  ggplot() +
+  geom_col(aes(x = score.pct, y = N_total_normal), fill = "blue") +
+  labs(title = "ARF_tnt.ARF16_col_b_m1")
+
+
+test_1 %>% 
+  ggplot() +
+  geom_col(aes(x = score.pct, y = N_total_normal), fill = "blue") +
+  labs(title = "ARF_tnt.ARF2_col_v31_m1")
+
+ 
+```
+
+#####--General for all TFs-----##########
+# Calculate "Norm_factor_1" to normalise N of TF binding sites found at certain distance for the relative abundance of promoters in certain distance; based on the number of promoters of particular length/divided by total N of promoters in the data; This will be the same for all the TFs.
+# Normalisation should be calculated based on Promoter length, not distance_to_TSS!!
+
+```{r}
+n_col <- seq(0, 1500, by = 10)
+
+Norm_promoters <- Brapa3_TF_results_homoeolog %>% 
+  select(gene_id, promoter_width) %>% 
+  mutate(promoter_width = round(promoter_width, -1)) %>% 
+  unique() %>% group_by(promoter_width) %>% 
+  mutate(N = n()) %>% 
+  ungroup() %>% 
+  arrange(N) %>%
+  select(-gene_id) %>% unique() %>% 
+  right_join(., data.frame("promoter_width" = n_col), by = "promoter_width") %>% 
+  mutate_all(list(~replace(., is.na(.), 0)))
+             
+list_promoters <- Norm_promoters$promoter_width
+# mutate(Norm_promoters, Norm_factor_1 =  unlist(lapply(list_promoters, function(x) filter(., promoter_width >= x ) %>% summarise(sum(N))))/sum(N))
+              
+Norm_promoters_factor1 <- Norm_promoters %>% 
+  mutate(Norm_factor_1 = unlist(lapply(list_promoters, function(x) filter(., promoter_width >= x ) %>%
+  summarise(sum(N))))/sum(N)) %>% 
+  arrange(desc(promoter_width)) %>% 
+  select(.,-N) 
+
+Norm_factor_1 <- Norm_promoters_factor1$Norm_factor_1
+
+```
+
+
+## Plot disribution of "promoter_width" and "Norm_factor_1"
+```{r}
+p1 <- Norm_promoters %>% 
+  ggplot() +
+  geom_col(aes(x = promoter_width, y = N), fill = "blue") +
+  labs(title =  "Brapa promoter_width distribution") +
+  scale_y_continuous(trans='log10') +
+  labs(y="log(N)")
+
+
+p2 <- Norm_promoters_factor1 %>% 
+  ggplot() +
+  geom_col(aes(x = promoter_width, y = Norm_factor_1), fill = "blue") +
+  labs(title =  "Brapa Norm_factor_1 distribution")
+
+p1
+p2
+
+#ggsave("Plots/Brapa_promoters_analysis_distance/Brapa_promoter_width_nomalisation_distribution.jpg", marrangeGrob(grobs = list(p1, p2), nrow = 2, ncol = 1))
+rm(p1, p2)
+```
+
+
+#####--------Specific for each TF--------------##############
+
+# *ARF_tnt.ARF16_col_b_m1* 
+# Create *"Expected_grid"*, if TF binding sites are distributed equally on the promoter, we will expect to find them with the same probability in any distance from TSS. At any distance we will be able to find the average number of TF binding sites with certain score.pct.
+# (number of score.pct will be the same at any distance, and will be equal to the average number of TF binding sites with this score.pct)
+## "N_total_normal" - Calculate the number of TF_binding sites with particular score.pct at all the distances from TSS and divide by their total number
+
+```{r}
+TF_motif <- "ARF_tnt.ARF16_col_b_m1"
+
+score_pct_distribution <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  summarise(N_total = n()) %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct))
+
+score_pct_distribution 
+```
+
+  
+## Empty matrix for "Expected grid"
+```{r}
+n_rows <- min(round(score_pct_distribution$score.pct)):max(round(score_pct_distribution$score.pct))
+n_col <- seq(0, 1500, by = 10)
+
+Expected_grid_empty <-as.data.frame(matrix(, length(n_rows), length(n_col), dimnames=list(as.character(n_rows), as.character(n_col))))
+
+```
+
+
+## Fill "Expected grid" with scores.pct
+```{r}
+Expected_grid <- Expected_grid_empty %>% 
+  rownames_to_column(., var = "rowname") %>% 
+  mutate(.,rowname = as.numeric(rowname)) %>% 
+  left_join(., score_pct_distribution, by = c("rowname" = "score.pct")) %>% 
+  mutate_at(.vars = vars(-rowname, -N_total, -N_total_normal), .funs = list(~c(N_total_normal))) %>% 
+  mutate_at(vars(-rowname, -N_total, -N_total_normal), list(~replace(., is.na(.), 0))) %>% 
+  select(-N_total, -N_total_normal)
+  
+```
+
+
+# Calculate "Norm_factor_2" for each TF to bring sum of values in Expected_grid to be 1
+```{r}
+Norm_factor_2 <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum()
+
+```
+
+
+## normalise "Expected_grid" by "Norm_factor_1" and "Norm_factor_2"
+```{r}
+Expected_grid_norm <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate_all(list(~(. / Norm_factor_2))) %>%
+  mutate(.,"rowname" = n_rows) %>% 
+  column_to_rownames(var="rowname")
+
+     
+# Check that the sum of all expected values is equal to 1
+Expected_grid_norm %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+```
+
+
+
+# Create *"Observed_grid"* (distribution of score.pct what were observed at any distance, for particular gene; nomalised by total Number of binding sites for this TF; the sum of values in Observed_grid is 1)
+
+## Calculate the number of TF_binding sites with particular score.pct
+
+```{r}
+Observed_grid <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  arrange(desc(score.pct)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+Observed_grid %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+
+
+
+```
+
+
+# Calculate MSE and RMSE between Observed and Expected:
+```{r}
+MSE <- (Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum()
+RMSE <- sqrt(
+            ((Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum())/
+              (length(n_rows)*length(n_col))
+            )
+
+MSE
+RMSE
+
+# [1] 0.0019797
+# [1] 0.0005654826
+
+```
+
+#Calculate an Overlap between "Predicted" and "Observed" values, by choosing the "min" value from both and sum all of the values.
+## if sum is closed to 1, there is no difference between the distributions of probabilities for "Observed" and "Expected"
+
+```{r}
+Overlap_Observed_Expected <- Observed_grid %>% rownames_to_column("score.pct") %>% 
+  gather("distance_to_TSS", "Observed", -score.pct) %>% 
+  left_join(., 
+            (Expected_grid_norm %>% rownames_to_column("score.pct") %>% 
+              gather("distance_to_TSS", "Expected", -score.pct)),
+  by = c("score.pct", "distance_to_TSS")) %>% 
+  mutate(min_score = pmin(Observed, Expected )) %>%
+  summarise_at(vars(min_score), funs(sum))
+
+Overlap_Observed_Expected
+# 0.1369796
+```
+
+
+### Plot heatmaps
+#### ARF_tnt.ARF16_col_b_m1_scores_pct_vs_distance_scaled.pdf: breaks=seq(0,0.005,length.out=101) - give less redish result
+```{r}
+# pdf("Plots/Brapa_promoters_analysis_distance/ARF_tnt.ARF16_col_b_m1_scores_pct_vs_distance_scaled_v1.pdf")
+# par(cex.main=1)
+# p1 <-
+heatmap(as.matrix(Expected_grid_norm),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,0.002,length.out=101),       
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Expected_ARF_tnt.ARF16_col_b_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# p2 <-
+heatmap(as.matrix(Observed_grid),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,0.002,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Observed_ARF_tnt.ARF16_col_b_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# dev.off()
+# 
+# 
+# p1
+# p2
+# 
+# rm(p1, p2)
+```
+
+### Plot heatmaps
+```{r}
+# pdf("Plots/Brapa_promoters_analysis_distance/ARF_tnt.ARF16_col_b_m1_scores_pct_vs_distance_unscaled.pdf")
+# par(cex.main=1)
+# p1 <- 
+heatmap(as.matrix(Expected_grid_norm),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),       
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Expected_ARF_tnt.ARF16_col_b_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# p2 <- 
+heatmap(as.matrix(Observed_grid),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          #breaks=seq(0,0.005,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Observed_ARF_tnt.ARF16_col_b_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# dev.off()
+# 
+# 
+# p1
+# p2
+# 
+# rm(p1, p2)
+
+```
+
+
+```{r}
+rm(TF_motif, score_pct_distribution, n_rows, n_col, Expected_grid, Expected_grid_empty, Expected_grid_norm, Observed_grid, list_promoters, Norm_factor_2, MSE, RMSE, Overlap_Observed_Expected)
+```
+
+
+#####-------"ARF_tnt.ARF2_col_v31_m1"-----------####
+
+
+# Create Expected_grid (distribution of score.pct what will be the same at any distance, and will be equal to the total distribution of all TF binding sites)
+# ARF_tnt.ARF16_col_b_m1  
+## Calculate the number of TF_binding sites with particular score.pct
+```{r}
+TF_motif <-  "ARF_tnt.ARF2_col_v31_m1"
+score_pct_distribution <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct) %>% 
+  mutate(score.pct = round(score.pct)) %>% 
+  group_by(score.pct) %>% 
+  mutate(N_total = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_total_normal = N_total/sum(N_total)) %>% 
+  arrange(desc(score.pct))
+  
+```
+
+## Empty matrix for "Expected grid"/ "Observed grid"
+```{r}
+n_rows <- min(round(score_pct_distribution$score.pct)):max(round(score_pct_distribution$score.pct))
+n_col <- seq(0, 1500, by = 10)
+Expected_grid_empty <-as.data.frame(matrix(, length(n_rows), length(n_col), dimnames=list(as.character(n_rows), as.character(n_col))))
+
+```
+
+## Fill "Expected grid" with scores.pct
+```{r}
+Expected_grid <- Expected_grid_empty %>% 
+  rownames_to_column(., var = "rowname") %>% 
+  mutate(.,rowname = as.numeric(rowname)) %>% 
+  left_join(., score_pct_distribution, by = c("rowname" = "score.pct")) %>% 
+  mutate_at(.vars = vars(-rowname, -N_total, -N_total_normal), .funs = list(~c(N_total_normal))) %>% 
+  mutate_at(vars(-rowname, -N_total, -N_total_normal), list(~replace(., is.na(.), 0))) %>% 
+  select(-N_total, -N_total_normal)
+```
+
+# Calculate "Norm_factor_2" for each TF to bring sum of values in Expected_grid to be 1
+```{r}
+Norm_factor_2 <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+  mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum()
+
+```
+
+## normalise "Expected_grid" by "Norm_factor_1" and "Norm_factor_2", calculated above
+```{r}
+Expected_grid_norm <- as_tibble(t(t(select(Expected_grid, -rowname))*Norm_factor_1)) %>% 
+   mutate_all(funs((. / Norm_factor_2))) %>%
+  mutate(.,"rowname" = n_rows) %>% 
+  column_to_rownames(var="rowname")
+  
+# Check that the sum of all expected values is equal to 1
+Expected_grid_norm %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+```
+
+
+
+# Create Observed_grid (distribution of score.pct what were observed at any distance, for particular gene; nomalised by total Number of binding sites for this TF)
+
+# ARF_tnt.ARF16_col_b_m1  
+## Calculate the number of TF_binding sites with particular score.pct
+```{r}
+Observed_grid <- Brapa3_TF_results_homoeolog %>% 
+  filter(motif == TF_motif) %>% 
+  select(score.pct, distance_to_TSS) %>% 
+  mutate(score.pct = round(score.pct), distance_to_TSS = round(distance_to_TSS, -1)) %>% 
+  group_by(score.pct, distance_to_TSS) %>% 
+  mutate(N_score_distance = n()) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  mutate(N_sd_norm = N_score_distance/sum(N_score_distance)) %>% 
+  arrange(desc(score.pct)) %>% 
+  select(., -N_score_distance) %>% 
+  right_join(., data.frame("distance_to_TSS" = n_col), by = "distance_to_TSS") %>% 
+  spread(., key = distance_to_TSS, value = N_sd_norm) %>% 
+  right_join(., data.frame("score.pct" = n_rows), by = "score.pct") %>% 
+  mutate_all(list(~replace(., is.na(.), 0))) %>% 
+  column_to_rownames(., var = "score.pct")
+
+Observed_grid %>% 
+mutate(sum = rowSums(.)) %>% 
+select(.,sum) %>% sum() == 1
+
+
+```
+
+
+# Calculate MSE and RMSE between Observed and Expected:
+```{r}
+MSE <- (Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum()
+RMSE <- sqrt(
+            ((Observed_grid - Expected_grid_norm)^2 %>% 
+              mutate(sum = rowSums(.)) %>% 
+              select(.,sum) %>% sum())/
+              (length(n_rows)*length(n_col))
+            )
+
+MSE
+RMSE
+
+# [1] 4.489267e-05
+# [1] 8.515444e-05
+```
+
+#Calculate the Overlape between "Predicted" and "Observed" values, by choosing the "min" value from both and sum all of the values.
+## if sum is closed to 1, there is no difference between the distributions of probabilities for "Observed" and "Expected"
+
+```{r}
+Overlap_Observed_Expected <- Observed_grid %>% rownames_to_column("score.pct") %>% 
+  gather("distance_to_TSS", "Observed", -score.pct) %>% 
+  left_join(., 
+            (Expected_grid_norm %>% rownames_to_column("score.pct") %>% 
+              gather("distance_to_TSS", "Expected", -score.pct)),
+  by = c("score.pct", "distance_to_TSS")) %>% 
+  mutate(min_score = pmin(Observed, Expected )) %>%
+  summarise_at(vars(min_score), funs(sum))
+
+Overlap_Observed_Expected
+# 0.8307025
+```
+
+
+### Plot heatmaps
+```{r}
+# pdf("Plots/Brapa_promoters_analysis_distance/ARF_tnt.ARF2_col_v31_m1_scores_pct_vs_distance_unscaled.pdf")
+# par(cex.main=1)
+# p1 <- 
+  heatmap(as.matrix(Expected_grid_norm),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          # breaks=seq(0,10,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Expected_ARF_tnt.ARF2_col_v31_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# p2 <- 
+  heatmap(as.matrix(Observed_grid),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          # breaks=seq(0,10,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Observed_ARF_tnt.ARF2_col_v31_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# dev.off()
+# 
+# 
+# p1
+# p2
+# 
+# rm(p1, p2)
+
+
+
+```
+
+### Plot heatmaps
+```{r}
+# pdf("Plots/Brapa_promoters_analysis_distance/ARF_tnt.ARF2_col_v31_m1_scores_pct_vs_distance_scaled.pdf")
+# par(cex.main=1)
+# p1 <- 
+  heatmap(as.matrix(Expected_grid_norm),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,0.0015,length.out=101),       
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Expected_ARF_tnt.ARF2_col_v31_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# p2 <- 
+  heatmap(as.matrix(Observed_grid),
+                          Rowv = NA,
+                          Colv = NA,
+                          scale = "none",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0,0.0015,length.out=101),      
+                          #labRow=NA,  
+                          #labCol=column_names,
+                          main="Observed_ARF_tnt.ARF2_col_v31_m1",
+                          #RowSideColors = brewer_par[data_matrix_variable$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg,
+                          #margins = c(12, 2)
+ )
+
+# dev.off()
+# 
+# 
+# p1
+# p2
+# 
+# rm(p1, p2)
+
+
+```
+
+
+```{r}
+rm(TF_motif, score_pct_distribution, n_rows, n_col, Expected_grid, Expected_grid_empty, Expected_grid_norm, Observed_grid, list_promoters, Norm_factor_2, MSE, RMSE, Overlap_Observed_Expected)
+```
+
+
+
+
