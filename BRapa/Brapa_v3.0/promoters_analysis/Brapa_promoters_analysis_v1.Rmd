@@ -51,7 +51,7 @@ load("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters_analysis/data/da
 
 ```
 
-# Pre-process and combine Brapa3_genomes with Brapa TF predicted binding data
+# Pre-process data and combine Brapa3_genomes with Brapa TF predicted binding sites data
 ```{r}
 Brapa3_genomes <- select(Brapa3_genomes_full, V1, "AGI" = V2, "Genome" = V4, "1" = V5, "2" = V6, "3" = V7) %>% 
   gather("homoeolog", "gene_id", -AGI, -Genome, -V1) %>%  filter(gene_id != "-")
@@ -142,6 +142,8 @@ test_2 %>%
 test_5 %>% 
   ggplot() +
   geom_point(aes(x = distance_to_TSS, y = score, alpha = N_rel), colour = "blue")
+
+rm(test_2, test_5)
 # When using score.pct, the enrichment at the end of the promoter is lost. Why?
 ```
 
@@ -157,6 +159,7 @@ TF_family <- unique(Brapa3_TF_results_homoeolog$TF_family)
    arrange(desc(TF_max_score))
  
  # Plot results for all families:
+ ## fixed y
  plot <- lapply(TF_family, function(x)
    Brapa3_TF_results_homoeolog %>% 
   filter(TF_family == x) %>% 
@@ -167,8 +170,23 @@ TF_family <- unique(Brapa3_TF_results_homoeolog$TF_family)
   theme(legend.position = "none") +
   scale_y_continuous(limits = c(0, 70))
    ) 
+ 
+ ## free y
+ plot1 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == x) %>% 
+  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
+  geom_point(colour = "blue", alpha = 0.25) +
+  labs(title = x) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+   ) 
+ 
+ plot[[1]]
+```
 
-
+# DONT RUN!
+```{r eval=FALSE, include=FALSE}
 j <- 1
 k <- 16
  for (i in 1:4){
@@ -182,15 +200,6 @@ ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 3, ".j
 ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 4, ".jpg"), marrangeGrob(grobs = plot[49:56], nrow=4, ncol=4))
 
 
- plot1 <- lapply(TF_family, function(x)
-   Brapa3_TF_results_homoeolog %>% 
-  filter(TF_family == x) %>% 
-  ggplot(aes(x = distance_to_TSS, y = score, alpha = 0.1, colour = "blue")) +
-  geom_point(colour = "blue", alpha = 0.25) +
-  labs(title = x) + 
-  theme_minimal() +
-  theme(legend.position = "none")
-   ) 
  
 ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 1, ".jpg"), marrangeGrob(grobs = plot1[1:16], nrow=4, ncol=4))
 ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 2, ".jpg"), marrangeGrob(grobs = plot1[17:32], nrow=4, ncol=4))
@@ -225,4 +234,73 @@ k <- 4
  }
 ```
 
+######-----ADD-------#######
+####-----test------####
+# Summarise DATA: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
+# Create bar_plot
 
+####----------------########
+# Plot: Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog 
+```{r}
+# test:
+Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == "BBRBPC_tnt") %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = TF_family[1]) +
+   theme_minimal() +
+   theme(legend.position = "none") +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3) + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines")) 
+ 
+
+#  theme(strip.text = element_text(face="bold", size=8),
+        
+ plot_3 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = score)) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none")  +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3)  + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines"))  
+   ) 
+ 
+# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
+j <- 1
+k <- 8
+ for (i in 1 : (length(TF_family)/8)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog", i, ".jpg"),
+         marrangeGrob(grobs = plot_3[j:k], nrow=4, ncol=2))
+ j <- j + 8
+ k <- k + 8
+ }
+
+####---log(y)
+ plot_4 <- lapply(TF_family, function(x)
+   Brapa3_TF_results_homoeolog %>%
+   filter(TF_family == x) %>%
+   ggplot(aes(x = distance_to_TSS, y = log(score))) +
+   geom_point(colour = "blue", alpha = 0.25) +
+   labs(title = x) +
+   theme_minimal() +
+   theme(legend.position = "none")  +
+   facet_wrap( ~ as.factor(homoeolog), ncol = 3)  + 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines"),
+            title = element_text(size = 10))
+   ) 
+ 
+# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
+j <- 1
+k <- 8
+ for (i in 1 : (length(TF_family)/8)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog/Brapa_distance_to_TSS_vs_TF_binding_log_score_by_homoeolog", i, ".jpg"),
+         marrangeGrob(grobs = plot_4[j:k], nrow=4, ncol=2))
+ j <- j + 8
+ k <- k + 8
+ }
+
+plot_4[[2]]
+```
