@@ -173,19 +173,6 @@ if (k < l) {ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_
 
 rm(i,j,k,l) 
 
-
-
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 1, ".jpg"), marrangeGrob(grobs = plot[1:16], nrow=4, ncol=4))
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 2, ".jpg"), marrangeGrob(grobs = plot[17:32], nrow=4, ncol=4))
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 3, ".jpg"), marrangeGrob(grobs = plot[33:48], nrow=4, ncol=4))
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 4, ".jpg"), marrangeGrob(grobs = plot[49:56], nrow=4, ncol=4))
-# 
-# 
-#  
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 1, ".jpg"), marrangeGrob(grobs = plot1[1:16], nrow=4, ncol=4))
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 2, ".jpg"), marrangeGrob(grobs = plot1[17:32], nrow=4, ncol=4))
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 3, ".jpg"), marrangeGrob(grobs = plot1[33:48], nrow=4, ncol=4))
-# ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", 4, ".jpg"), marrangeGrob(grobs = plot1[49:56], nrow=4, ncol=4))
 ```
 
 
@@ -203,8 +190,13 @@ plot2 <- lapply(TF_family, function(x)
    theme(legend.position = "none") +
    facet_wrap( ~ as.factor(Ancestral_blocks), ncol = 5) 
    ) 
- 
 
+plot2[[2]]
+
+```
+
+# DON't RUN! #Save plots
+```{r eval=FALSE, include=FALSE}
 j <- 1
 k <- 4
  for (i in 1:(length(TF_family)/4)){
@@ -218,7 +210,7 @@ k <- 4
 ######-----ADD-------#######
 ####-----test------####
 # Summarise DATA: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
-# Create bar_plot
+# Create a bar_plot of abundance of TF bs per promoter for each Ancestral Chromosomal block
 
 ####----------------########
 # Plot: Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog 
@@ -232,11 +224,9 @@ Brapa3_TF_results_homoeolog %>%
    theme_minimal() +
    theme(legend.position = "none") +
    facet_wrap( ~ as.factor(homoeolog), ncol = 3) + 
-      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines")) 
+      theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines")) #optional: theme(strip.text = element_text(face="bold", size=8)
  
-
-#  theme(strip.text = element_text(face="bold", size=8),
-        
+       
  plot_3 <- lapply(TF_family, function(x)
    Brapa3_TF_results_homoeolog %>%
    filter(TF_family == x) %>%
@@ -249,15 +239,6 @@ Brapa3_TF_results_homoeolog %>%
       theme(strip.text.x = element_text(size = 8), panel.spacing = unit(0.1, "lines"))  
    ) 
  
-# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
-j <- 1
-k <- 8
- for (i in 1 : (length(TF_family)/8)){
-  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog", i, ".jpg"),
-         marrangeGrob(grobs = plot_3[j:k], nrow=4, ncol=2))
- j <- j + 8
- k <- k + 8
- }
 
 ####---log(y)
  plot_4 <- lapply(TF_family, function(x)
@@ -273,7 +254,25 @@ k <- 8
             title = element_text(size = 10))
    ) 
  
-# dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
+
+plot_4[[2]]
+```
+
+# DON'T RUN!
+```{r eval=FALSE, include=FALSE}
+
+dir.create("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog")
+
+j <- 1
+k <- 8
+ for (i in 1 : (length(TF_family)/8)){
+  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog/Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog", i, ".jpg"),
+         marrangeGrob(grobs = plot_3[j:k], nrow=4, ncol=2))
+ j <- j + 8
+ k <- k + 8
+ }
+ 
+
 j <- 1
 k <- 8
  for (i in 1 : (length(TF_family)/8)){
@@ -283,12 +282,11 @@ k <- 8
  k <- k + 8
  }
 
-plot_4[[2]]
 ```
 
 
-
-# test: plot distance_to_TSS vs score or score.pct for "ARF_tnt" 
+# test: Repeat plots with Use score.pct instead of score
+plot distance_to_TSS vs score or score.pct for "ARF_tnt" 
 ```{r}
 ARF_tnt_distance_to_TSS_score_pct <- Brapa3_TF_results_homoeolog %>% 
   filter(TF_family == "ARF_tnt") %>% 
@@ -329,6 +327,87 @@ ARF_tnt_distance_to_TSS_score %>%
   theme_minimal()
 
 rm(ARF_tnt_distance_to_TSS_score, ARF_tnt_distance_to_TSS_score_pct)
-# When using score.pct, the enrichment at the end of the promoter is lost. Why?
+
+```
+# *When using score.pct, the enrichment at the end of the promoter is lost. Why?*
+
+```{r}
+Brapa3_genomes_full
+Brapa3_promoters1500_annotation
+levels(seqnames(Brapa3_promoters1500_annotation))[1:20]
+
+```
+
+
+######################----Continue: TO CLEAN-------############
+# Plot "distance_to_TSS" vs "score" and "score.pct" for "ARF_tnt"
+## Plot separately for each TF in this family
+
+```{r}
+p_1 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score )) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_2 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_3 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score)) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  facet_grid(~ as.factor(motif)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_4 <-  Brapa3_TF_results_homoeolog %>% 
+  filter(TF_family == "ARF_tnt") %>% 
+  ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+  geom_point(colour = "blue", alpha = 0.15) +
+  labs(title = TF_family[3]) + 
+  facet_grid(~ as.factor(motif)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# p_5 <-  Brapa3_TF_results_homoeolog %>% 
+#   filter(TF_family == "ARF_tnt", motif == "ARF_tnt.ARF2_col_v31_m1") %>% 
+#   ggplot(aes(x = distance_to_TSS, y = score.pct)) +
+#   geom_point(colour = "blue", alpha = 0.15) +
+#   labs(title = TF_family[3]) +
+#   theme_minimal() +
+#   theme(legend.position = "none")
+# 
+
+p_1
+p_2
+p_3
+p_4
+
+# dir.create("Plots/Meeting")
+# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF.jpg"), 
+#          marrangeGrob(grobs = list(p_1, p_2, p_3, p_4), nrow=2, ncol=2))
+
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v1.jpg"), 
+         marrangeGrob(grobs = list(p_1, p_2), nrow=1, ncol=2))
+
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v2.jpg"), 
+         marrangeGrob(grobs = list(p_3, p_4), nrow=2, ncol=1))
+
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF.jpg"), p_1)
+ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF.jpg"), p_2)
+
+# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v3.jpg"), p_3)
+# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF_v4.jpg"), p_4)
+
+
 ```
 
