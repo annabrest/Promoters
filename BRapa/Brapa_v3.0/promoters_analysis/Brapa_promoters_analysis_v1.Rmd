@@ -145,21 +145,35 @@ TF_family <- unique(Brapa3_TF_results_homoeolog$TF_family)
  plot1[[7]]
 ```
 
-# DONT RUN!
+# DONT RUN! # save all plots as jpg
 ```{r eval=FALSE, include=FALSE}
 j <- 1
 k <- 16
- for (i in 1:4){
-  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", i, ".jpg"), marrangeGrob(grobs = plot[j:k], nrow=4, ncol=4))
- j <- j+16
- k <- k + 16
- }
+l <- length(plot)
+for (i in 1:4){ 
+if (k < l) {ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", i, ".jpg"), marrangeGrob(grobs = plot[j:k], nrow=4, ncol=4))
+  } else {
+    ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", i, ".jpg"), marrangeGrob(grobs = plot[j:l], nrow=4, ncol=4))
+  }  
+} 
 
-for (i in 1:4){
-  ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", i, ".jpg"), marrangeGrob(grobs = plot1[j:k], nrow=4, ncol=4))
- j <- j+16
- k <- k + 16
- }
+rm(i,j,k,l) 
+
+ 
+
+j <- 1
+k <- 16
+l <- length(plot)
+for (i in 1:4){ 
+if (k < l) {ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", i, ".jpg"), marrangeGrob(grobs = plot1[j:k], nrow=4, ncol=4))
+  } else {
+    ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_free_y_", i, ".jpg"), marrangeGrob(grobs = plot1[j:l], nrow=4, ncol=4))
+  }  
+} 
+
+rm(i,j,k,l) 
+
+
 
 # ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 1, ".jpg"), marrangeGrob(grobs = plot[1:16], nrow=4, ncol=4))
 # ggsave(paste0("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_fixed_y_", 2, ".jpg"), marrangeGrob(grobs = plot[17:32], nrow=4, ncol=4))
