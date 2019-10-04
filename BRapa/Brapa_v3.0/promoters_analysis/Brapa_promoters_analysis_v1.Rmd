@@ -102,9 +102,7 @@ Brapa3_TF_results_homoeolog$distance_to_TSS <- Brapa3_TF_results_homoeolog$promo
                                                Brapa3_TF_results_homoeolog$start + 1
 ```
 
-
-
-# Plot Brapa_distance_to_TSS_vs_TF_binding_score
+# Plot Brapa_distance_to_TSS_vs_TF_binding_score for all TFs families
 ```{r}
 TF_family <- unique(Brapa3_TF_results_homoeolog$TF_family)
 
@@ -176,7 +174,7 @@ rm(i,j,k,l)
 ```
 
 
-####--------##########
+####----Analised based on Ancestral Chromosomal blocks----####
 
 # Plot: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
 ```{r}
@@ -208,9 +206,62 @@ k <- 4
 ```
 
 ######-----ADD-------#######
-####-----test------####
+
 # Summarise DATA: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
 # Create a bar_plot of abundance of TF bs per promoter for each Ancestral Chromosomal block
+
+# Plot N of genes in each Ancestral_block
+```{r}
+Brapa3_TF_results_homoeolog %>% 
+  select(gene_id, Ancestral_blocks) %>% 
+  unique() %>% 
+  group_by(Ancestral_blocks) %>% 
+  ggplot(mapping = aes(x = Ancestral_blocks)) +
+  geom_bar() +
+  labs(title = "Relative abandance of the genes in different Ancestral chromosomal blocks") +
+       ylab("N of genes")
+```
+
+# Plot total N of TF binding sites in each Ancestral_block
+```{r}
+Brapa3_TF_results_homoeolog %>% 
+  select(Ancestral_blocks, motif) %>% 
+  group_by(Ancestral_blocks) %>% 
+  ggplot(mapping = aes(x = Ancestral_blocks)) +
+  geom_bar() +
+  labs(title = "Abandance of the TF binding sites in different Ancestral chromosomal blocks") +
+  ylab("Total N of TF binding sites") +
+  theme(plot.title = element_text(size=12))
+```
+
+#Plot mean N of TF binding sites per promoter in each Ancestral_block
+```{r}
+#Calculate N of binding sites on each promoter
+Brapa3_TF_results_homoeolog %>% 
+  select(Ancestral_blocks, gene_id, motif) %>% 
+  group_by(Ancestral_blocks, gene_id) %>% 
+  summarise(N_binding_sites_per_promoter = n())
+
+# Plot mean N of binding sites on each promoter
+Brapa3_TF_results_homoeolog %>% 
+  select(Ancestral_blocks, gene_id, motif) %>% 
+  group_by(Ancestral_blocks, gene_id) %>% 
+  summarise(N_binding_sites_per_promoter = n()) %>% 
+  group_by(Ancestral_blocks) %>% 
+  summarise(mean_N_binding_sites_per_promoter = mean(N_binding_sites_per_promoter)) %>% 
+  ggplot(mapping = aes(x = Ancestral_blocks, y = mean_N_binding_sites_per_promoter)) +
+  geom_col() +
+  labs(title = "Mean N of the TF binding sites per promoter in different Ancestral chromosomal blocks") +
+  ylab("mean N of TF binding sites on promoter")
+```
+
+
+
+
+
+
+
+
 
 ####----------------########
 # Plot: Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog 
