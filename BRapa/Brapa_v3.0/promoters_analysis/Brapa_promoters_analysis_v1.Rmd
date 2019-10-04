@@ -255,7 +255,31 @@ Brapa3_TF_results_homoeolog %>%
   ylab("mean N of TF binding sites on promoter")
 ```
 
+# Plot Relative abandancy of TF binding sites = N of promoters for each TF
+```{r}
+Brapa3_TF_results_homoeolog %>% 
+  select(Ancestral_blocks, gene_id, motif) %>% 
+  group_by(Ancestral_blocks, motif) %>% 
+  summarise(N_promoters = n()) %>% 
+  ggplot(aes(x=Ancestral_blocks, y = N_promoters)) +
+  geom_boxplot() +
+  labs(title = "Total number of promoters bound by each TF in different Ancestral chromosomal blocks") +
+  ylab("N of promoters with each TF binding sites") +
+  theme(plot.title = element_text(size=12))
 
+Brapa3_TF_results_homoeolog %>% 
+  select(gene_id, Ancestral_blocks, motif) %>% 
+  group_by(Ancestral_blocks) %>% 
+  mutate(N_genes_Ancestral_blocks = length(unique(gene_id))) %>% 
+  group_by(Ancestral_blocks, motif) %>% 
+  mutate(N_promoters = n(), rel_N_promoter = n()/N_genes_Ancestral_blocks) %>% 
+  ggplot(aes(x=Ancestral_blocks, y = rel_N_promoter)) +
+  geom_boxplot() +
+  labs(title = "Relative abundance of the TF binding sites in promoters of different Ancestral chromosomal blocks") +
+  ylab("Rel N of promoters with each TF binding sites") +
+  theme(plot.title = element_text(size=12))
+ 
+```
 
 
 
