@@ -2,7 +2,7 @@
 title: "Analysis of distribution of TF binding sites in Brapa promoters; automatization; investigation"
 output: html_document
 ---
-
+# Aim: development of the tool/statstics to determine TF candicates with "not flat" pattern 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```

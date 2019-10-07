@@ -1,8 +1,8 @@
 ---
-title: "Analysis of distribution of TF binding sites in Brapa promoters, ARF_tnt family"
+title: "Analysis of distribution of TF binding sites in Brapa promoters (Expexted vs Observed), ARF_tnt family"
 output: html_document
 ---
-
+# Aim: development of the tool/statstics to determine TF candicates with "not flat" pattern 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```

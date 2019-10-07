@@ -1,5 +1,5 @@
 ---
-title: "Distribution of TF binding sites on promoters"
+title: "Distribution of TF binding sites on promoters - general exploratory analysis"
 output: html_document
 ---
 
@@ -205,14 +205,13 @@ k <- 4
  }
 ```
 
-######-----ADD-------#######
+####-----Summarise DATA: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)-------#######
 
-# Summarise DATA: Brapa_distance_to_TSS_vs_TF_binding_score_by_groups (Ancestral Chromosomal blocks)
 # Create a bar_plot of abundance of TF bs per promoter for each Ancestral Chromosomal block
 
 # Plot N of genes in each Ancestral_block
 ```{r}
-Brapa3_TF_results_homoeolog %>% 
+plot_1 <- Brapa3_TF_results_homoeolog %>% 
   select(gene_id, Ancestral_blocks) %>% 
   unique() %>% 
   group_by(Ancestral_blocks) %>% 
@@ -220,11 +219,14 @@ Brapa3_TF_results_homoeolog %>%
   geom_bar() +
   labs(title = "Relative abandance of the genes in different Ancestral chromosomal blocks") +
        ylab("N of genes")
+plot_1
+# ggsave("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups/Summary/Relative_abandance_genes_Ancestral_chromosomal_blocks.jpg", plot_1)
+rm(plot_1)
 ```
 
 # Plot total N of TF binding sites in each Ancestral_block
 ```{r}
-Brapa3_TF_results_homoeolog %>% 
+plot_2 <- Brapa3_TF_results_homoeolog %>% 
   select(Ancestral_blocks, motif) %>% 
   group_by(Ancestral_blocks) %>% 
   ggplot(mapping = aes(x = Ancestral_blocks)) +
@@ -232,6 +234,10 @@ Brapa3_TF_results_homoeolog %>%
   labs(title = "Abandance of the TF binding sites in different Ancestral chromosomal blocks") +
   ylab("Total N of TF binding sites") +
   theme(plot.title = element_text(size=12))
+
+plot_2
+# ggsave("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups/Summary/Total_abandance_TF_Ancestral_chromosomal_blocks.jpg", plot_2)
+rm(plot_2)
 ```
 
 #Plot mean N of TF binding sites per promoter in each Ancestral_block
@@ -243,7 +249,7 @@ Brapa3_TF_results_homoeolog %>%
   summarise(N_binding_sites_per_promoter = n())
 
 # Plot mean N of binding sites on each promoter
-Brapa3_TF_results_homoeolog %>% 
+plot_3 <- Brapa3_TF_results_homoeolog %>% 
   select(Ancestral_blocks, gene_id, motif) %>% 
   group_by(Ancestral_blocks, gene_id) %>% 
   summarise(N_binding_sites_per_promoter = n()) %>% 
@@ -253,11 +259,16 @@ Brapa3_TF_results_homoeolog %>%
   geom_col() +
   labs(title = "Mean N of the TF binding sites per promoter in different Ancestral chromosomal blocks") +
   ylab("mean N of TF binding sites on promoter")
+
+plot_3
+# ggsave("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups/Summary/mean_TF_per_promoter_Ancestral_chromosomal_blocks.jpg", plot_3)
+rm(plot_3)
+
 ```
 
 # Plot Relative abandancy of TF binding sites = N of promoters for each TF
 ```{r}
-Brapa3_TF_results_homoeolog %>% 
+plot_1 <- Brapa3_TF_results_homoeolog %>% 
   select(Ancestral_blocks, gene_id, motif) %>% 
   group_by(Ancestral_blocks, motif) %>% 
   summarise(N_promoters = n()) %>% 
@@ -267,7 +278,7 @@ Brapa3_TF_results_homoeolog %>%
   ylab("N of promoters with each TF binding sites") +
   theme(plot.title = element_text(size=12))
 
-Brapa3_TF_results_homoeolog %>% 
+plot_2 <- Brapa3_TF_results_homoeolog %>% 
   select(gene_id, Ancestral_blocks, motif) %>% 
   group_by(Ancestral_blocks) %>% 
   mutate(N_genes_Ancestral_blocks = length(unique(gene_id))) %>% 
@@ -278,6 +289,13 @@ Brapa3_TF_results_homoeolog %>%
   labs(title = "Relative abundance of the TF binding sites in promoters of different Ancestral chromosomal blocks") +
   ylab("Rel N of promoters with each TF binding sites") +
   theme(plot.title = element_text(size=12))
+
+plot_1
+plot_2
+# ggsave("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups/Summary/Total_abandance_promoters_per_TF_Ancestral_chromosomal_blocks.jpg", plot_1)
+# ggsave("Plots/Brapa_distance_to_TSS_vs_TF_binding_score_by_groups/Summary/Relative_abandance_promoters_per_TF_Ancestral_chromosomal_blocks.jpg", plot_2)
+
+rm(plot_1, plot_2)
  
 ```
 
@@ -287,7 +305,7 @@ Brapa3_TF_results_homoeolog %>%
 
 
 
-####----------------########
+####----Analised based on homoeologs ------------########
 # Plot: Brapa_distance_to_TSS_vs_TF_binding_score_by_homoeolog 
 ```{r}
 # test:
@@ -360,8 +378,8 @@ k <- 8
 ```
 
 
-# test: Repeat plots with Use score.pct instead of score
-plot distance_to_TSS vs score or score.pct for "ARF_tnt" 
+####----- test: Compare plots using score.pct vs of score
+# plot distance_to_TSS vs score or score.pct for "ARF_tnt" family
 ```{r}
 ARF_tnt_distance_to_TSS_score_pct <- Brapa3_TF_results_homoeolog %>% 
   filter(TF_family == "ARF_tnt") %>% 
@@ -406,16 +424,8 @@ rm(ARF_tnt_distance_to_TSS_score, ARF_tnt_distance_to_TSS_score_pct)
 ```
 # *When using score.pct, the enrichment at the end of the promoter is lost. Why?*
 
-```{r}
-Brapa3_genomes_full
-Brapa3_promoters1500_annotation
-levels(seqnames(Brapa3_promoters1500_annotation))[1:20]
 
-```
-
-
-######################----Continue: TO CLEAN-------############
-# Plot "distance_to_TSS" vs "score" and "score.pct" for "ARF_tnt"
+# Plot "distance_to_TSS" vs "score" and "score.pct" for "ARF_tnt" family and individual memebers (2 TFs)
 ## Plot separately for each TF in this family
 
 ```{r}
@@ -453,14 +463,6 @@ p_4 <-  Brapa3_TF_results_homoeolog %>%
   theme_minimal() +
   theme(legend.position = "none")
 
-# p_5 <-  Brapa3_TF_results_homoeolog %>% 
-#   filter(TF_family == "ARF_tnt", motif == "ARF_tnt.ARF2_col_v31_m1") %>% 
-#   ggplot(aes(x = distance_to_TSS, y = score.pct)) +
-#   geom_point(colour = "blue", alpha = 0.15) +
-#   labs(title = TF_family[3]) +
-#   theme_minimal() +
-#   theme(legend.position = "none")
-# 
 
 p_1
 p_2
@@ -468,9 +470,6 @@ p_3
 p_4
 
 # dir.create("Plots/Meeting")
-# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF.jpg"), 
-#          marrangeGrob(grobs = list(p_1, p_2, p_3, p_4), nrow=2, ncol=2))
-
 ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v1.jpg"), 
          marrangeGrob(grobs = list(p_1, p_2), nrow=1, ncol=2))
 
@@ -480,9 +479,15 @@ ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v2.jp
 ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF.jpg"), p_1)
 ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF.jpg"), p_2)
 
-# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_ARF_v3.jpg"), p_3)
-# ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF_v4.jpg"), p_4)
+rm(p1, p2, p3, p4)
+```
+Using score.pct makes all TFs streangh to be comparable
 
+######################----Continue: TO CLEAN-------############
+
+```{r}
+Brapa3_genomes_full
+Brapa3_promoters1500_annotation
+levels(seqnames(Brapa3_promoters1500_annotation))[1:20]
 
 ```
-
