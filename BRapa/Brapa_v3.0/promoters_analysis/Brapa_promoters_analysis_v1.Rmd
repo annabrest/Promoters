@@ -1,5 +1,5 @@
 ---
-title: "Distribution of TF binding sites on promoters - general exploratory analysis"
+title: "Distribution of TF binding sites on promoters - general exploratory analysis and comparison between Brassica and Arabidopsis"
 output: html_document
 ---
 
@@ -34,7 +34,7 @@ set.seed(100)
 ```{r}
 load("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters_analysis/data/data_to_load/Brapa_promoters_analysis_to_load.RData")
 
-# Brapa3_genomes_full <- # Brapa and Ara orthologs
+# Brapa3_genomes_full <- # Brapa and Ara orthologs; Change this file later to updated.
 #     read.delim("~/Work/2019/Data/JIC/Brapa/reference/3genomes_AKBr_v3_1810.txt", header=FALSE, stringsAsFactors=FALSE)
 #  
 # Brapa3_promoters1500_annotation <- # gff3 file of annotated promoters
@@ -52,6 +52,7 @@ load("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters_analysis/data/da
 ```
 
 # Pre-process data and combine Brapa3_genomes with Brapa TF predicted binding sites data
+"Brapa3_genomes_full" should be change later to updated version:
 ```{r}
 Brapa3_genomes <- select(Brapa3_genomes_full, V1, "AGI" = V2, "Ancestral_blocks" = V4, "1" = V5, "2" = V6, "3" = V7) %>% 
   gather("homoeolog", "gene_id", -AGI, -Ancestral_blocks, -V1) %>%  filter(gene_id != "-")
@@ -426,7 +427,7 @@ rm(ARF_tnt_distance_to_TSS_score, ARF_tnt_distance_to_TSS_score_pct)
 
 
 # Plot "distance_to_TSS" vs "score" and "score.pct" for "ARF_tnt" family and individual memebers (2 TFs)
-## Plot separately for each TF in this family
+## Plot separately for each TF in this family for a meeting April 2019
 
 ```{r}
 p_1 <-  Brapa3_TF_results_homoeolog %>% 
@@ -484,10 +485,61 @@ rm(p1, p2, p3, p4)
 Using score.pct makes all TFs streangh to be comparable
 
 ######################----Continue: TO CLEAN-------############
-
+# remove all plots
 ```{r}
-Brapa3_genomes_full
-Brapa3_promoters1500_annotation
-levels(seqnames(Brapa3_promoters1500_annotation))[1:20]
+ls()[str_detect(ls(), "^p_") | str_detect(ls(), "^plot")]
+```
+
+
+####--------Brassica / Arabidopsis Orthologs-------##########
+
+# Pre-process data and combine Arabidopsis TF predicted binding data, cluster info and distance to TSS
+## Extract cluster number, add "0" if not in the list of expressed/variable genes from "clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op"
+```{r}
+# Add cluster number, add "0" if not in the list of expressed/variable genes
+Ara_TF_results_scan <- Ara_TF_results_scan %>% 
+  left_join(., unique(select(clust_zscoresVariableGenes_triplicate_10TPM_prom_no_op, cluster, AGI)), by = c("sequence" = "AGI")) %>% 
+  mutate_at(vars(-1), list(~replace(., is.na(.), 0)))
+
+# 3,109,838 rows
+```
+
+
+# Add distanse of TF from TSS
+```{r}
+Ara_TF_results_scan <- data.frame("promoter_width" = width(Ara_promoters1500_annotation), 
+              "gene_id" = mcols(Ara_promoters1500_annotation)$gene_id,
+              "strand" = strand(Ara_promoters1500_annotation)) %>% 
+              inner_join(., select(Ara_TF_results_scan, -strand), by = c("gene_id" = "sequence"))
+
+# 3,109,838 
+
+Ara_TF_results_scan$distance_to_TSS <- Ara_TF_results_scan$promoter_width -
+                                               Ara_TF_results_scan$start + 1
 
 ```
+
+# Combine Brapa and Arabidopsis orthologs with annatated promoters
+
+```{r}
+Brapa3_TF_results_orthologs <- Brapa3_TF_results_homoeolog %>% 
+   inner_join(., unique(select(Ara_TF_results_scan, gene_id, cluster)), by = c("AGI" = "gene_id"))
+
+
+length(unique(Brapa3_TF_results_orthologs$gene_id))
+length(unique(Brapa3_TF_results_homoeolog$gene_id))
+length(unique(Brapa3_TF_results_orthologs$AGI))
+length(unique(Brapa3_TF_results_homoeolog$AGI))
+# [1] 23022 # Brapa genes having orthologs with Arabidopsis genes with have annotated promoters)
+# [1] 33550
+# [1] 14356 #Arabidopsis genes having orthologs with Brapa
+# [1] 18075
+
+Ara_TF_results_orthologs <-
+  Ara_TF_results_scan %>% 
+   inner_join(., unique(select(Brapa3_TF_results_homoeolog, AGI)), by = c("gene_id" = "AGI"))
+length(unique(Ara_TF_results_orthologs$gene_id))
+# [1] 14356
+```
+
+
