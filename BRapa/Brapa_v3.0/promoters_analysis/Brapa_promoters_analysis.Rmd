@@ -773,7 +773,7 @@ ggsave(paste0("Plots/Meeting/Brapa_distance_to_TSS_vs_TF_binding_score_pct_ARF.j
 ```
 
 
-# Pre-process and combine Ara_bidopsis TF predicted binding data, cluster info and distance to TSS
+# Pre-process and combine Arabidopsis TF predicted binding data, cluster info and distance to TSS
 ```{r}
 Ara_TF_results_scan
 Ara_promoters1500_annotation
